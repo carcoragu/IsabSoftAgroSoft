@@ -1,0 +1,15 @@
+# Base de datos Access (NO subir a GitHub - contiene datos reales)
+*.accdb
+*.mdb
+*.laccdb
+
+# Configuración local con rutas y datos sensibles
+config.asp
+
+# Archivos temporales de Windows
+Thumbs.db
+desktop.ini
+*.tmp
+
+# Archivos de Office temporales
+~$*

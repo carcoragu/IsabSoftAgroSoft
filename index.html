@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>IsabSoft | Plataforma Agroganadera</title>
+<script>
+// ══════════════════════════════════════════════════
+// ISABSOFT · MOTOR OFFLINE-FIRST
+// Guarda en IndexedDB cuando no hay red
+// Sincroniza con Access via ASP cuando hay conexión
+// ══════════════════════════════════════════════════
+const DB_NAME = 'IsabSoftOffline';
+const DB_VER  = 1;
+const API_URL = 'api/registrar.asp';
+let idb = null;
+
+// Abrir IndexedDB
+function abrirIDB(){
+  return new Promise((res,rej)=>{
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains('cola')){
+        const s = db.createObjectStore('cola',{keyPath:'id',autoIncrement:true});
+        s.createIndex('enviado','enviado',{unique:false});
+      }
+    };
+    req.onsuccess = e=>{ idb = e.target.result; res(idb); };
+    req.onerror   = e=>rej(e);
+  });
+}
+
+// Guardar en cola offline
+function guardarOffline(datos){
+  return new Promise((res,rej)=>{
+    const tx = idb.transaction('cola','readwrite');
+    const s  = tx.objectStore('cola');
+    datos.enviado = 0;
+    datos.fecha   = new Date().toISOString();
+    const req = s.add(datos);
+    req.onsuccess = ()=>res(req.result);
+    req.onerror   = ()=>rej(req.error);
+  });
+}
+
+// Contar registros pendientes
+function contarPendientes(){
+  return new Promise(res=>{
+    const tx  = idb.transaction('cola','readonly');
+    const idx = tx.objectStore('cola').index('enviado');
+    const req = idx.count(IDBKeyRange.only(0));
+    req.onsuccess = ()=>res(req.result);
+    req.onerror   = ()=>res(0);
+  });
+}
+
+// Sincronizar cola con Access
+async function sincronizar(){
+  if(!navigator.onLine) return;
+  const tx    = idb.transaction('cola','readonly');
+  const store = tx.objectStore('cola');
+  const idx   = store.index('enviado');
+  const todos = await new Promise(res=>{
+    const req = idx.getAll(IDBKeyRange.only(0));
+    req.onsuccess = ()=>res(req.result);
+    req.onerror   = ()=>res([]);
+  });
+  if(todos.length === 0) return;
+
+  for(const item of todos){
+    try{
+      const r = await fetch(API_URL,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(item)
+      });
+      const json = await r.json();
+      if(json.ok){
+        // Marcar como enviado en IndexedDB
+        const tx2 = idb.transaction('cola','readwrite');
+        const s2  = tx2.objectStore('cola');
+        item.enviado    = 1;
+        item.fechaSync  = new Date().toISOString();
+        s2.put(item);
+      }
+    } catch(e){ /* sin conexión, reintentará */ }
+  }
+  actualizarIndicador();
+}
+
+// Enviar registro: online → Access directo | offline → IndexedDB
+async function enviarRegistro(datos){
+  if(navigator.onLine){
+    try{
+      const r    = await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(datos)});
+      const json = await r.json();
+      if(json.ok) return {ok:true, modo:'online', id:json.id};
+    } catch(e){}
+  }
+  // Sin conexión o falla → guardar offline
+  const id = await guardarOffline(datos);
+  return {ok:true, modo:'offline', id};
+}
+
+// Actualizar indicador visual
+async function actualizarIndicador(){
+  const online = navigator.onLine;
+  const pend   = await contarPendientes();
+  const badge  = document.getElementById('statusBadge');
+  const bar    = document.getElementById('offlineBar');
+  const pendBadge = document.getElementById('pendBadge');
+  if(badge){
+    badge.textContent = online ? '● Online' : '● Offline';
+    badge.className   = online ? 'badge-on' : 'badge-off';
+  }
+  if(bar) bar.style.display = !online ? 'block' : 'none';
+  if(pendBadge){
+    pendBadge.textContent = pend > 0 ? pend + ' pendientes' : '';
+    pendBadge.style.display = pend > 0 ? 'inline-block' : 'none';
+  }
+}
+
+// Inicializar
+window.addEventListener('DOMContentLoaded', async ()=>{
+  await abrirIDB();
+  actualizarIndicador();
+  // Sincronizar al recuperar conexión
+  window.addEventListener('online',  ()=>{ actualizarIndicador(); sincronizar(); });
+  window.addEventListener('offline', ()=>  actualizarIndicador());
+  // Intentar sync cada 60 segundos
+  setInterval(sincronizar, 60000);
+});
+</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --azul:#1565c0;--azul2:#1e88e5;
+  --repro:#6a1b9a;--repro2:#8e24aa;
+  --agro:#bf360c;--agro2:#e64a19;
+  --verde:#2e7d32;
+  --fondo:#f0f4f9;--blanco:#fff;--texto:#1a1a2e;--sub:#8a8a9a;
+  --sombra:0 4px 20px rgba(0,0,0,.08);
+  --sombra2:0 8px 32px rgba(0,0,0,.14);
+}
+html,body{height:100%;font-family:'Segoe UI',system-ui,sans-serif;background:var(--fondo);color:var(--texto);}
+
+#app{display:flex;flex-direction:column;min-height:100vh;max-width:430px;margin:0 auto;background:var(--fondo);}
+@media(min-width:900px){
+  #app{max-width:100%;flex-direction:row;}
+  #sidebar{display:flex!important;width:256px;flex-shrink:0;flex-direction:column;background:#0a1628;}
+  #content{flex:1;overflow-y:auto;}
+  #bottomnav{display:none!important;}
+}
+
+.screen{display:none;flex-direction:column;min-height:100vh;}
+.screen.active{display:flex;}
+
+/* LOGIN */
+#s-login{
+  background:url('img/PortadaFacebook.jpg') center/cover no-repeat;
+  align-items:center;justify-content:center;padding:48px 24px;position:relative;
+}
+#s-login::before{content:'';position:absolute;inset:0;background:rgba(5,20,50,.78);}
+#s-login > *{position:relative;z-index:1;}
+.login-logo{text-align:center;margin-bottom:28px;}
+.login-logo img{height:80px;object-fit:contain;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4));}
+.login-logo p{color:rgba(255,255,255,.72);font-size:.85rem;margin-top:10px;}
+.login-card{background:#fff;border-radius:24px;padding:32px 28px;width:100%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,.3);}
+.login-card h2{font-size:1.15rem;color:var(--azul);margin-bottom:22px;font-weight:800;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:.72rem;font-weight:700;color:var(--sub);margin-bottom:6px;text-transform:uppercase;letter-spacing:.8px;}
+.field input,.field select{width:100%;padding:13px 16px;border:2px solid #e8e8f0;border-radius:12px;font-size:.95rem;outline:none;background:#fafafa;transition:border .2s;}
+.field input:focus,.field select:focus{border-color:var(--azul2);background:#fff;}
+.btn-login{width:100%;padding:15px;background:linear-gradient(135deg,var(--azul),var(--azul2));color:#fff;border:none;border-radius:30px;font-size:1rem;font-weight:800;cursor:pointer;margin-top:8px;transition:opacity .2s;}
+.btn-login:hover{opacity:.9;}
+.login-hint{text-align:center;font-size:.75rem;color:var(--sub);margin-top:14px;}
+
+/* SIDEBAR */
+#sidebar{display:none;background:#0a1628;color:#fff;}
+.sb-logo{padding:28px 22px 20px;border-bottom:1px solid rgba(255,255,255,.07);}
+.sb-logo .brand{font-size:1.2rem;font-weight:900;color:#fff;}
+.sb-logo .brand em{font-style:normal;color:#90caf9;}
+.sb-logo p{font-size:.68rem;color:rgba(255,255,255,.4);margin-top:3px;}
+.sb-user{padding:16px 22px;border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;gap:12px;}
+.sb-av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--azul),var(--azul2));display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9rem;}
+.sb-info .name{font-size:.88rem;font-weight:700;}
+.sb-info .role{font-size:.7rem;color:rgba(255,255,255,.45);}
+.sb-dot{margin-left:auto;width:8px;height:8px;border-radius:50%;background:#69f0ae;box-shadow:0 0 8px #69f0ae;}
+.sb-sec{padding:16px 22px 6px;font-size:.6rem;font-weight:800;letter-spacing:2.5px;color:rgba(255,255,255,.25);text-transform:uppercase;}
+.sb-item{display:flex;align-items:center;gap:13px;padding:12px 22px;cursor:pointer;font-size:.87rem;color:rgba(255,255,255,.65);transition:all .15s;border:none;background:none;width:100%;text-align:left;border-left:3px solid transparent;}
+.sb-item:hover,.sb-item.act{background:rgba(255,255,255,.06);color:#fff;border-left-color:var(--azul2);}
+.sb-i{font-size:1.05rem;width:20px;text-align:center;}
+.sb-badge{margin-left:auto;background:#e64a19;color:#fff;font-size:.6rem;font-weight:800;padding:2px 7px;border-radius:10px;}
+
+/* TOPBAR */
+.topbar{display:flex;align-items:center;padding:14px 18px;background:#fff;border-bottom:1px solid #eaeaf0;position:sticky;top:0;z-index:20;gap:10px;}
+.back-btn{background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--azul);padding:0 8px 0 0;}
+.ttitle{font-size:1rem;font-weight:800;flex:1;}
+.badge-on{background:#e8f5e9;color:#2e7d32;font-size:.65rem;font-weight:800;padding:4px 10px;border-radius:20px;}
+
+/* BOTTOM NAV */
+#bottomnav{display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;box-shadow:0 -4px 20px rgba(0,0,0,.06);}
+.bn{flex:1;display:flex;flex-direction:column;align-items:center;padding:11px 4px 9px;cursor:pointer;color:var(--sub);border:none;background:none;}
+.bn.act{color:var(--azul);}
+.bn-i{font-size:1.25rem;}
+.bn-l{font-size:.58rem;font-weight:700;margin-top:3px;text-transform:uppercase;letter-spacing:.3px;}
+
+/* ════ DASHBOARD ════ */
+.dash-header{
+  background:linear-gradient(135deg,#0a1628 0%,#1565c0 55%,#1e88e5 100%);
+  padding:24px 20px 52px;color:#fff;position:relative;overflow:hidden;
+}
+.dash-header::before{content:'';position:absolute;top:-50px;right:-50px;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,.04);}
+.dash-header::after{content:'';position:absolute;bottom:-70px;left:-40px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,.03);}
+.dh-row{display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:1;}
+.dh-tag{font-size:.63rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:6px;}
+.dh-name{font-size:1.4rem;font-weight:900;line-height:1.15;}
+.dh-sub{font-size:.77rem;color:rgba(255,255,255,.6);margin-top:5px;}
+.dh-av{width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1rem;flex-shrink:0;}
+.dh-pills{display:flex;gap:7px;margin-top:18px;flex-wrap:wrap;position:relative;z-index:1;}
+.dh-pill{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:5px 12px;font-size:.7rem;display:flex;align-items:center;gap:6px;}
+.dot{width:7px;height:7px;border-radius:50%;}
+.dot.g{background:#69f0ae;box-shadow:0 0 6px #69f0ae80;}
+.dot.o{background:#ffab40;box-shadow:0 0 6px #ffab4080;}
+
+/* KPI */
+.kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 16px;margin-top:-36px;position:relative;z-index:2;}
+.kpi{background:#fff;border-radius:18px;padding:18px 16px;box-shadow:var(--sombra2);border-top:4px solid transparent;transition:transform .15s;cursor:default;}
+.kpi:hover{transform:translateY(-2px);}
+.kpi.k1{border-top-color:#1e88e5;}
+.kpi.k2{border-top-color:#43a047;}
+.kpi.k3{border-top-color:#8e24aa;}
+.kpi.k4{border-top-color:#e64a19;}
+.kpi-lbl{font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--sub);margin-bottom:6px;}
+.kpi-num{font-size:1.6rem;font-weight:900;color:var(--texto);line-height:1;}
+.kpi-desc{font-size:.67rem;color:#bbb;margin-top:3px;}
+.kpi-trend{font-size:.67rem;font-weight:800;margin-top:6px;}
+.kpi-trend.up{color:#2e7d32;}
+.kpi-trend.warn{color:#e65100;}
+
+/* MÓDULOS */
+.sec{padding:18px 16px 0;}
+.sec-title{font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:12px;}
+.mod-card{border-radius:20px;padding:20px;color:#fff;cursor:pointer;display:flex;align-items:center;gap:16px;box-shadow:var(--sombra2);margin-bottom:12px;position:relative;overflow:hidden;transition:transform .18s,box-shadow .18s;border:none;width:100%;text-align:left;}
+.mod-card::before{content:'';position:absolute;right:-20px;top:-20px;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,.07);}
+.mod-card::after{content:'›';position:absolute;right:20px;top:50%;transform:translateY(-50%);font-size:1.6rem;opacity:.4;font-weight:300;}
+.mod-card:hover{transform:translateY(-3px);box-shadow:0 12px 36px rgba(0,0,0,.2);}
+.mod-card.agro{background:linear-gradient(135deg,#7b1900,#bf360c,#e64a19);}
+.mod-card.repro{background:linear-gradient(135deg,#38006b,#6a1b9a,#9c27b0);}
+.mod-iw{width:56px;height:56px;border-radius:16px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:1.8rem;flex-shrink:0;}
+.mod-b{flex:1;}
+.mod-tag2{font-size:.6rem;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;opacity:.65;margin-bottom:3px;}
+.mod-name{font-size:1.1rem;font-weight:900;}
+.mod-det{font-size:.72rem;opacity:.72;margin-top:4px;line-height:1.4;}
+.mod-chip{position:absolute;top:14px;right:36px;background:rgba(255,255,255,.18);border-radius:8px;padding:3px 9px;font-size:.62rem;font-weight:800;}
+
+/* QUICK ACTIONS */
+.qa-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.qa{background:#fff;border-radius:16px;padding:14px 6px;text-align:center;cursor:pointer;box-shadow:var(--sombra);transition:transform .15s,box-shadow .15s;border:none;}
+.qa:hover{transform:translateY(-3px);box-shadow:var(--sombra2);}
+.qa-i{font-size:1.5rem;}
+.qa-l{font-size:.6rem;color:var(--sub);margin-top:5px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;}
+
+/* ALERTAS */
+.alert-item{background:#fff;border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;box-shadow:var(--sombra);border-left:4px solid transparent;}
+.alert-item.red{border-left-color:#d32f2f;}
+.alert-item.orange{border-left-color:#f57c00;}
+.alert-item.blue{border-left-color:#1976d2;}
+.al-ic{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;}
+.ri{background:#fde8e8;}.oi{background:#fff3e0;}.bi{background:#e3f2fd;}
+.al-txt .at{font-size:.85rem;font-weight:700;}
+.al-txt .as{font-size:.7rem;color:var(--sub);margin-top:2px;}
+.al-time{margin-left:auto;font-size:.65rem;color:#ccc;white-space:nowrap;}
+
+/* ACTIVIDAD */
+.act-item{background:#fff;border-radius:14px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;box-shadow:var(--sombra);}
+.act-ic{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;}
+.ac-a{background:#fff3e0;}.ac-p{background:#f3e5f5;}.ac-c{background:#e3f2fd;}.ac-v{background:#e8f5e9;}
+.act-txt .at{font-size:.87rem;font-weight:700;}
+.act-txt .as{font-size:.72rem;color:var(--sub);margin-top:2px;}
+.act-r{margin-left:auto;text-align:right;flex-shrink:0;}
+.act-time{font-size:.65rem;color:#ccc;}
+.act-val{font-size:.75rem;font-weight:800;color:var(--azul);margin-top:2px;}
+
+/* CHAT */
+#s-chat{background:#eef2f7;}
+.chat-chips{display:flex;gap:8px;padding:10px 16px;overflow-x:auto;background:#fff;border-bottom:1px solid #eaeaf0;}
+.chip{background:#e3f2fd;color:var(--azul);border:none;border-radius:20px;padding:7px 15px;font-size:.75rem;font-weight:700;cursor:pointer;white-space:nowrap;}
+.chip:hover{background:#bbdefb;}
+.chat-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;padding-bottom:100px;}
+.msg{max-width:82%;}
+.msg.bot{align-self:flex-start;}
+.msg.user{align-self:flex-end;}
+.msg-row{display:flex;gap:8px;align-items:flex-end;}
+.msg.user .msg-row{flex-direction:row-reverse;}
+.bubble{padding:12px 16px;border-radius:18px;font-size:.9rem;line-height:1.55;}
+.msg.bot .bubble{background:#fff;border-radius:4px 18px 18px 18px;box-shadow:var(--sombra);}
+.msg.user .bubble{background:linear-gradient(135deg,var(--azul),var(--azul2));color:#fff;border-radius:18px 18px 4px 18px;}
+.msg-t{font-size:.62rem;color:var(--sub);margin-top:4px;}
+.msg.user .msg-t{text-align:right;}
+.bot-av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--azul),var(--azul2));color:#fff;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:800;flex-shrink:0;}
+.typing{display:flex;gap:5px;align-items:center;padding:13px 16px;background:#fff;border-radius:18px;width:fit-content;box-shadow:var(--sombra);}
+.typing span{width:8px;height:8px;border-radius:50%;background:#ccc;animation:bonce 1.2s infinite;}
+.typing span:nth-child(2){animation-delay:.2s;}
+.typing span:nth-child(3){animation-delay:.4s;}
+@keyframes bonce{0%,60%,100%{transform:translateY(0);}30%{transform:translateY(-7px);}}
+.chat-bar{padding:12px 14px;background:#fff;border-top:1px solid #eaeaf0;display:flex;align-items:center;gap:8px;position:sticky;bottom:0;}
+.chat-in{flex:1;border:2px solid #e8e8f0;border-radius:24px;padding:11px 18px;font-size:.9rem;outline:none;font-family:inherit;transition:border .2s;}
+.chat-in:focus{border-color:var(--azul2);}
+.chat-btn{width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.1rem;transition:transform .15s;}
+.chat-btn:hover{transform:scale(1.08);}
+.mic-btn{background:#e3f2fd;color:var(--azul);}
+.send-btn{background:linear-gradient(135deg,var(--azul),var(--azul2));color:#fff;}
+
+/* MÓDULOS INTERNOS */
+.mod-header{padding:22px 18px 36px;color:#fff;position:relative;overflow:hidden;}
+.mod-header::after{content:'';position:absolute;bottom:-50px;right:-30px;width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,.06);}
+.rh{background:linear-gradient(135deg,#38006b,#6a1b9a,#9c27b0);}
+.ah{background:linear-gradient(135deg,#7b1900,#bf360c,#e64a19);}
+.mod-header h1{font-size:1.2rem;font-weight:900;position:relative;z-index:1;}
+.mod-header p{font-size:.78rem;opacity:.75;margin-top:4px;position:relative;z-index:1;}
+.stat-strip{display:flex;gap:8px;margin-top:16px;position:relative;z-index:1;}
+.stat-p{background:rgba(255,255,255,.14);border-radius:12px;padding:10px 12px;flex:1;text-align:center;}
+.sv{font-size:1.45rem;font-weight:900;}
+.sl{font-size:.62rem;opacity:.75;margin-top:2px;text-transform:uppercase;letter-spacing:.5px;}
+
+.list-box{padding:14px 16px 90px;}
+.li{background:#fff;border-radius:14px;padding:15px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px;box-shadow:var(--sombra);cursor:pointer;transition:transform .15s;}
+.li:hover{transform:translateX(4px);}
+.li-ic{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;}
+.lir{background:#f3e5f5;}.lia{background:#fff3e0;}.lig{background:#e8f5e9;}
+.li-inf .lt{font-size:.9rem;font-weight:700;}
+.li-inf .ls{font-size:.72rem;color:var(--sub);margin-top:2px;}
+.li-st{margin-left:auto;font-size:.7rem;font-weight:800;padding:5px 11px;border-radius:10px;white-space:nowrap;}
+.ok{background:#e8f5e9;color:#2e7d32;}
+.pe{background:#fff8e1;color:#f57f17;}
+.al2{background:#fce4ec;color:#c62828;}
+
+.fab{position:fixed;bottom:78px;right:18px;width:58px;height:58px;border-radius:50%;border:none;font-size:1.6rem;color:#fff;cursor:pointer;z-index:30;box-shadow:0 6px 20px rgba(0,0,0,.25);transition:transform .15s;}
+.fab:hover{transform:scale(1.1);}
+.fab-r{background:linear-gradient(135deg,var(--repro),var(--repro2));}
+.fab-a{background:linear-gradient(135deg,var(--agro),var(--agro2));}
+@media(min-width:900px){.fab{bottom:32px;right:32px;}}
+
+/* FORMULARIOS */
+.form-body{padding:16px;padding-bottom:110px;}
+.f-card{background:#fff;border-radius:18px;padding:20px;margin-bottom:14px;box-shadow:var(--sombra);}
+.f-card h3{font-size:.9rem;font-weight:800;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid var(--fondo);}
+.ff{margin-bottom:14px;}
+.ff label{display:block;font-size:.67rem;font-weight:800;color:var(--sub);margin-bottom:5px;text-transform:uppercase;letter-spacing:.8px;}
+.ff input,.ff select,.ff textarea{width:100%;padding:12px 14px;border:2px solid #e8e8f0;border-radius:12px;font-size:.9rem;outline:none;font-family:inherit;background:#fafafa;transition:border .2s;}
+.ff input:focus,.ff select:focus,.ff textarea:focus{border-color:var(--repro2);background:#fff;}
+.ff textarea{resize:vertical;min-height:80px;}
+.f-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.btn-save{width:100%;padding:15px;border:none;border-radius:30px;font-size:1rem;font-weight:800;color:#fff;cursor:pointer;transition:opacity .15s;}
+.btn-save:hover{opacity:.9;}
+.btn-r{background:linear-gradient(135deg,var(--repro),var(--repro2));}
+.btn-a{background:linear-gradient(135deg,var(--agro),var(--agro2));}
+
+/* PRESUPUESTO */
+.pres-wrap{padding:16px;padding-bottom:20px;}
+.pres-doc{background:#fff;border-radius:20px;padding:24px;box-shadow:var(--sombra2);}
+.pres-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;padding-bottom:18px;border-bottom:2px solid var(--fondo);}
+.pb{font-size:1.1rem;font-weight:900;color:var(--repro);}
+.pb em{font-style:normal;color:var(--repro2);}
+.ps{font-size:.72rem;color:var(--sub);margin-top:3px;}
+.pn{text-align:right;font-size:.72rem;color:var(--sub);line-height:1.7;}
+.pc-box{background:#fdf4ff;border-radius:12px;padding:14px;margin-bottom:18px;}
+.pc-l{font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--sub);margin-bottom:4px;}
+.pc-n{font-size:.95rem;font-weight:800;}
+.pc-s{font-size:.75rem;color:var(--sub);margin-top:3px;}
+table.pt{width:100%;border-collapse:collapse;font-size:.82rem;margin-bottom:18px;}
+table.pt thead tr{background:var(--repro);color:#fff;}
+table.pt thead th{padding:10px;text-align:left;font-size:.72rem;font-weight:700;}
+table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
+.pres-total{display:flex;justify-content:flex-end;margin-bottom:12px;}
+.pt-box{background:#fdf4ff;border-radius:14px;padding:16px 20px;text-align:right;}
+.ptl{font-size:.72rem;color:var(--sub);font-weight:700;text-transform:uppercase;letter-spacing:.8px;}
+.ptv{font-size:1.5rem;font-weight:900;color:var(--repro);}
+.pts{font-size:.72rem;color:var(--sub);}
+.pres-note{font-size:.72rem;color:var(--sub);font-style:italic;}
+.pres-acts{display:flex;gap:10px;margin-top:16px;}
+.pa-btn{flex:1;padding:14px;border:none;border-radius:30px;font-size:.88rem;font-weight:800;cursor:pointer;}
+.pa-sh{background:linear-gradient(135deg,var(--repro),var(--repro2));color:#fff;}
+.pa-pr{background:#ede7f6;color:var(--repro);}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="sb-logo"><img src="img/LogoIsabSoftNuevo.png" style="height:48px;object-fit:contain;display:block;margin-bottom:6px;"/><p style="color:rgba(255,255,255,.45);font-size:.68rem;">Plataforma Agroganadera · Paraguay</p></div>
+  <div class="sb-user">
+    <div class="sb-av">JR</div>
+    <div class="sb-info"><div class="name">Juan Ramírez</div><div class="role">Administrador · Est. San Juan</div></div>
+    <div class="sb-dot"></div>
+  </div>
+  <div class="sb-sec">Principal</div>
+  <button class="sb-item act" onclick="go('home')"><span class="sb-i">🏠</span> Dashboard</button>
+  <button class="sb-item" onclick="go('chat')"><span class="sb-i">🤖</span> IA Asistente</button>
+  <div class="sb-sec">AgroSoft</div>
+  <button class="sb-item" onclick="go('agro')"><span class="sb-i">🐄</span> Panel AgroSoft</button>
+  <button class="sb-item" onclick="go('form-compra')"><span class="sb-i">🛒</span> Compras</button>
+  <button class="sb-item" onclick="go('form-venta')"><span class="sb-i">💰</span> Ventas</button>
+  <button class="sb-item" onclick="go('kilos')"><span class="sb-i">⚖️</span> Kilos y Ganancias</button>
+  <button class="sb-item" onclick="go('alimentacion')"><span class="sb-i">🌽</span> Costos Alimentación</button>
+  <button class="sb-item" onclick="go('resultados')"><span class="sb-i">📊</span> Resultados por Lote</button>
+  <div class="sb-sec">ReproGan</div>
+  <button class="sb-item" onclick="go('repro')"><span class="sb-i">🔬</span> Panel ReproGan</button>
+  <button class="sb-item" onclick="go('madres')"><span class="sb-i">🐄</span> Madres y Terneros</button>
+  <button class="sb-item" onclick="go('form-insem')"><span class="sb-i">💉</span> Inseminación <span class="sb-badge">8</span></button>
+  <button class="sb-item" onclick="go('caravana')"><span class="sb-i">🏷️</span> Por Caravana</button>
+  <button class="sb-item" onclick="go('historial')"><span class="sb-i">📋</span> Historial Animal</button>
+  <button class="sb-item" onclick="go('sanidad')"><span class="sb-i">💊</span> Sanidad y Vacunas</button>
+  <button class="sb-item" onclick="go('prenez')"><span class="sb-i">🤰</span> Preñez y Destete</button>
+  <button class="sb-item" onclick="go('presupuesto')"><span class="sb-i">📄</span> Presupuestos</button>
+</div>
+
+<div id="content" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+
+<!-- ════ LOGIN ════ -->
+<div class="screen active" id="s-login">
+  <div class="login-logo">
+    <img src="img/LogoIsabSoftNuevo.png" alt="IsabSoft"/>
+    <p>Plataforma Agroganadera Inteligente · Paraguay</p>
+  </div>
+  <div class="login-card">
+    <h2>Iniciar sesión</h2>
+    <div class="field"><label>Correo / Usuario</label><input type="text" value="juan@estanciasanjuan.com"/></div>
+    <div class="field"><label>Contraseña</label><input type="password" value="12345678"/></div>
+    <div class="field"><label>Establecimiento</label>
+      <select><option>Estancia San Juan — Caaguazú</option><option>Estancia El Paraíso — Concepción</option></select>
+    </div>
+    <button class="btn-login" onclick="go('home')">Ingresar al sistema →</button>
+    <p class="login-hint">v2.1 · Online · Última sync: hace 2 min</p>
+  </div>
+</div>
+
+<!-- ════ DASHBOARD ════ -->
+<div class="screen" id="s-home">
+  <div style="overflow-y:auto;flex:1;">
+
+    <div class="dash-header" style="background:url('img/PortadaFacebook.jpg') center/cover no-repeat;position:relative;">
+      <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(5,20,50,.88) 0%,rgba(10,50,120,.80) 60%,rgba(5,20,50,.88) 100%);"></div>
+      <div style="position:relative;z-index:1;">
+      <img src="img/LogoIsabSoftNuevo.png" style="height:38px;object-fit:contain;margin-bottom:12px;display:block;"/>
+      </div>
+      <div class="dh-row" style="position:relative;z-index:1;">
+        <div>
+          <div class="dh-tag">IsabSoft · Plataforma Agroganadera</div>
+          <div class="dh-name">Buenos días, Juan 👋</div>
+          <div class="dh-sub">📍 Estancia San Juan · Caaguazú, Paraguay</div>
+        </div>
+        <div class="dh-av">JR</div>
+      </div>
+      <div class="dh-pills" style="position:relative;z-index:1;">
+        <div class="dh-pill"><div class="dot g"></div>Sistema online</div>
+        <div class="dh-pill"><div class="dot g"></div>5 usuarios activos</div>
+        <div class="dh-pill"><div class="dot o"></div>3 alertas hoy</div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi k1">
+        <div class="kpi-lbl">Animales en stock</div>
+        <div class="kpi-num">847</div>
+        <div class="kpi-desc">73 en engorde · 42 madres</div>
+        <div class="kpi-trend up">▲ +30 este mes</div>
+      </div>
+      <div class="kpi k2">
+        <div class="kpi-lbl">Resultado neto</div>
+        <div class="kpi-num">Gs. 8.8M</div>
+        <div class="kpi-desc">Margen 18% · Mayo</div>
+        <div class="kpi-trend up">▲ +5% vs abril</div>
+      </div>
+      <div class="kpi k3">
+        <div class="kpi-lbl">GDP promedio</div>
+        <div class="kpi-num">0.85 kg</div>
+        <div class="kpi-desc">Ganancia diaria/animal</div>
+        <div class="kpi-trend up">▲ Meta 0.80 kg ✓</div>
+      </div>
+      <div class="kpi k4">
+        <div class="kpi-lbl">Alertas activas</div>
+        <div class="kpi-num">8</div>
+        <div class="kpi-desc">Requieren acción hoy</div>
+        <div class="kpi-trend warn">⚠ Ver alertas</div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">Módulos del sistema</div>
+      <button class="mod-card agro" onclick="go('agro')">
+        <div class="mod-iw">🐄</div>
+        <div class="mod-b">
+          <div class="mod-tag2">IsabSoft</div>
+          <div class="mod-name">AgroSoft</div>
+          <div class="mod-det">847 animales · 12 movimientos hoy · Gs. 48M en ventas</div>
+        </div>
+        <div class="mod-chip">ERP</div>
+      </button>
+      <button class="mod-card repro" onclick="go('repro')">
+        <div class="mod-iw">🔬</div>
+        <div class="mod-b">
+          <div class="mod-tag2">IsabSoft</div>
+          <div class="mod-name">ReproGan</div>
+          <div class="mod-det">34 inseminadas · 82% preñez · 8 alertas reproductivas</div>
+        </div>
+        <div class="mod-chip">REPRO</div>
+      </button>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">Acciones rápidas</div>
+      <div class="qa-grid">
+        <button class="qa" onclick="go('chat')"><div class="qa-i">🤖</div><div class="qa-l">IA Chat</div></button>
+        <button class="qa" onclick="go('madres')"><div class="qa-i">🐄</div><div class="qa-l">Madres</div></button>
+        <button class="qa" onclick="go('form-insem')"><div class="qa-i">💉</div><div class="qa-l">Inseminar</div></button>
+        <button class="qa" onclick="go('kilos')"><div class="qa-i">⚖️</div><div class="qa-l">Pesaje</div></button>
+        <button class="qa" onclick="go('sanidad')"><div class="qa-i">💊</div><div class="qa-l">Vacunas</div></button>
+        <button class="qa" onclick="go('form-venta')"><div class="qa-i">💰</div><div class="qa-l">Venta</div></button>
+        <button class="qa" onclick="go('resultados')"><div class="qa-i">📊</div><div class="qa-l">Resultados</div></button>
+        <button class="qa" onclick="go('presupuesto')"><div class="qa-i">📄</div><div class="qa-l">Presupuesto</div></button>
+        <button class="qa" onclick="go('propuesta')" style="border:2px solid #1565c0;"><div class="qa-i">🤝</div><div class="qa-l" style="color:#1565c0;font-weight:900;">Propuesta</div></button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">Ciclo productivo — Resumen</div>
+      <div style="background:#f5f7fa;border-radius:14px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="background:#fff;border-radius:10px;padding:12px;border-left:3px solid #7b1fa2;">
+          <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;color:#7b1fa2;margin-bottom:6px;">🐄 Cría</div>
+          <div style="font-size:.82rem;color:#333;line-height:1.8;">
+            <div>Madres activas: <strong>42</strong></div>
+            <div>Terneros al pie: <strong>38</strong></div>
+            <div>Para destetar: <strong>2 hoy</strong></div>
+            <div>Preñadas: <strong>28</strong></div>
+            <div>Próx. parto: <strong>9 días</strong></div>
+          </div>
+        </div>
+        <div style="background:#fff;border-radius:10px;padding:12px;border-left:3px solid #bf360c;">
+          <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;color:#bf360c;margin-bottom:6px;">⚖️ Engorde</div>
+          <div style="font-size:.82rem;color:#333;line-height:1.8;">
+            <div>En engorde: <strong>73</strong></div>
+            <div>GDP promedio: <strong>0.85 kg/día</strong></div>
+            <div>Listo para venta: <strong>8</strong></div>
+            <div>Stock alimento: <strong>12 días</strong></div>
+            <div>Costo/día: <strong>Gs. 4.200</strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">Alertas del día</div>
+      <div class="alert-item red" onclick="go('madres')">
+        <div class="al-ic ri">🐂</div>
+        <div class="al-txt"><div class="at">2 terneros para destetar hoy</div><div class="as">Caravana #1031-T y #1044-T · Lote 1 · +60 días</div></div>
+        <div class="al-time">Hoy</div>
+      </div>
+      <div class="alert-item red" onclick="go('repro')">
+        <div class="al-ic ri">🚨</div>
+        <div class="al-txt"><div class="at">12 vacas para tacto diagnóstico</div><div class="as">Lote 1 · 30 días post-IATF · Confirmar preñez</div></div>
+        <div class="al-time">Hoy</div>
+      </div>
+      <div class="alert-item orange" onclick="go('prenez')">
+        <div class="al-ic oi">🤰</div>
+        <div class="al-txt"><div class="at">Parto esperado en 9 días</div><div class="as">Caravana #1019 · Lote 1 · 1er parto · Vigilar</div></div>
+        <div class="al-time">20/05</div>
+      </div>
+      <div class="alert-item orange" onclick="go('kilos')">
+        <div class="al-ic oi">⚖️</div>
+        <div class="al-txt"><div class="at">8 novillos listos para venta</div><div class="as">Lote 3 · Superaron 420 kg · GDP óptimo alcanzado</div></div>
+        <div class="al-time">Vender</div>
+      </div>
+      <div class="alert-item orange" onclick="go('alimentacion')">
+        <div class="al-ic oi">🌽</div>
+        <div class="al-txt"><div class="at">Stock alimento: solo 12 días</div><div class="as">2.450 kg restantes · Reponer balanceado urgente</div></div>
+        <div class="al-time">Stock</div>
+      </div>
+      <div class="alert-item blue" onclick="go('sanidad')">
+        <div class="al-ic bi">💊</div>
+        <div class="al-txt"><div class="at">Vacuna Carbunclo vencida — Lote 3</div><div class="as">18 animales sin vacunar · Aplicar esta semana</div></div>
+        <div class="al-time">Sanidad</div>
+      </div>
+    </div>
+
+    <div class="sec"><div class="sec-title">Actividad reciente</div></div>
+    <div style="padding:0 16px 90px;" id="actList">
+      <div class="act-item">
+        <div class="act-ic ac-c">🤖</div>
+        <div class="act-txt"><div class="at">IA registró inseminación</div><div class="as">8 vacas · Lote 4 · Brahman X</div></div>
+        <div class="act-r"><div class="act-time">Hace 10 min</div></div>
+      </div>
+      <div class="act-item">
+        <div class="act-ic ac-a">💰</div>
+        <div class="act-txt"><div class="at">Venta · 15 novillos</div><div class="as">Juan López · Frigorífico Central</div></div>
+        <div class="act-r"><div class="act-time">Hace 45 min</div><div class="act-val">Gs. 11.340.000</div></div>
+      </div>
+      <div class="act-item">
+        <div class="act-ic ac-p">🔬</div>
+        <div class="act-txt"><div class="at">Diagnóstico preñez confirmado</div><div class="as">Lote 2 · 10/12 positivas · 83%</div></div>
+        <div class="act-r"><div class="act-time">Hace 2 h</div></div>
+      </div>
+      <div class="act-item">
+        <div class="act-ic ac-v">🛒</div>
+        <div class="act-txt"><div class="at">Compra de insumos</div><div class="as">20 bolsas balanceado · Agro Norte</div></div>
+        <div class="act-r"><div class="act-time">Ayer</div><div class="act-val">Gs. 1.200.000</div></div>
+      </div>
+      <div class="act-item">
+        <div class="act-ic ac-a">🐄</div>
+        <div class="act-txt"><div class="at">Movimiento de animales</div><div class="as">25 novillos · Lote 3 → Lote 5</div></div>
+        <div class="act-r"><div class="act-time">Ayer</div></div>
+      </div>
+    </div>
+
+  </div>
+  <div id="bottomnav">
+    <button class="bn act" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ CHAT IA ════ -->
+<div class="screen" id="s-chat">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('home')">←</button>
+    <span class="ttitle">🤖 IA Asistente IsabSoft</span>
+    <span class="badge-on" id="statusBadge">● Online</span>
+    <span id="pendBadge" style="display:none;background:#ff6f00;color:#fff;font-size:.6rem;font-weight:800;padding:3px 8px;border-radius:10px;margin-left:4px;"></span>
+  </div>
+  <div class="chat-chips">
+    <button class="chip" onclick="sc('Realice compra de 100 vacas')">🛒 Compra vacas</button>
+    <button class="chip" onclick="sc('Inseminamos 8 vacas del lote 4')">💉 Inseminar</button>
+    <button class="chip" onclick="sc('Vendimos 15 novillos')">💰 Venta</button>
+    <button class="chip" onclick="sc('¿Qué vacas deben tactarse mañana?')">📋 Alertas</button>
+    <button class="chip" onclick="sc('Mostrame gastos del mes')">📊 Gastos</button>
+    <button class="chip" onclick="sc('¿Cuántas pajuelas quedan?')">❄️ Stock semen</button>
+  </div>
+  <div class="chat-msgs" id="chatMsgs">
+    <div class="msg bot">
+      <div class="msg-row">
+        <div class="bot-av">IA</div>
+        <div>
+          <div class="bubble">¡Hola Juan! 👋 Soy tu asistente <strong>IsabSoft IA</strong>.<br><br>Escribime o dictame cualquier registro del campo y lo proceso automáticamente.<br><br>Ejemplos:<br>• <em>"Realice compra de 100 vacas"</em><br>• <em>"Inseminamos 8 vacas del lote 4"</em><br>• <em>"Vendimos 20 novillos a Gs. 450.000"</em></div>
+          <div class="msg-t">Ahora</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="chat-bar">
+    <button class="chat-btn mic-btn" onclick="simVoz()">🎙️</button>
+    <input class="chat-in" id="chatIn" placeholder="Escribí o dictá un registro..." onkeydown="if(event.key==='Enter')enviar()"/>
+    <button class="chat-btn send-btn" onclick="enviar()">➤</button>
+  </div>
+</div>
+
+<!-- ════ REPROGAN ════ -->
+<div class="screen" id="s-repro">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('home')">←</button>
+    <span class="ttitle">🔬 ReproGan</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div class="mod-header rh">
+      <h1>IsabSoft | ReproGan</h1>
+      <p>Gestión reproductiva bovina inteligente</p>
+      <div class="stat-strip">
+        <div class="stat-p"><div class="sv">34</div><div class="sl">Inseminadas</div></div>
+        <div class="stat-p"><div class="sv">28</div><div class="sl">Confirmadas</div></div>
+        <div class="stat-p"><div class="sv">82%</div><div class="sl">Preñez</div></div>
+        <div class="stat-p"><div class="sv">8</div><div class="sl">Alertas</div></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:16px;">
+      <button onclick="go('madres')" style="background:linear-gradient(135deg,#4a148c,#7b1fa2);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">🐄</div>
+        <div style="font-weight:800;font-size:.88rem;">Madres y Terneros</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">42 madres · 38 terneros</div>
+      </button>
+      <button onclick="go('form-insem')" style="background:linear-gradient(135deg,#1a237e,#3949ab);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">💉</div>
+        <div style="font-weight:800;font-size:.88rem;">Inseminación</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">34 inseminadas · 82% preñez</div>
+      </button>
+      <button onclick="go('caravana')" style="background:linear-gradient(135deg,#004d40,#00796b);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">🏷️</div>
+        <div style="font-weight:800;font-size:.88rem;">Por Caravana</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">Búsqueda por número</div>
+      </button>
+      <button onclick="go('historial')" style="background:linear-gradient(135deg,#bf360c,#e64a19);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">📋</div>
+        <div style="font-weight:800;font-size:.88rem;">Historial Animal</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">Eventos por animal</div>
+      </button>
+      <button onclick="go('sanidad')" style="background:linear-gradient(135deg,#1b5e20,#388e3c);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">💊</div>
+        <div style="font-weight:800;font-size:.88rem;">Sanidad y Vacunas</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">3 vencimientos próximos</div>
+      </button>
+      <button onclick="go('prenez')" style="background:linear-gradient(135deg,#880e4f,#c2185b);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">🤰</div>
+        <div style="font-weight:800;font-size:.88rem;">Preñez y Destete</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">28 preñadas · 6 para destetar</div>
+      </button>
+    </div>
+
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Registros recientes</div>
+      <div class="li" onclick="go('form-insem')">
+        <div class="li-ic lir">💉</div>
+        <div class="li-inf"><div class="lt">Inseminación · Lote 4</div><div class="ls">8 vacas · Brahman X · 10/05/2026</div></div>
+        <div class="li-st ok">Registrado</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lir">🔬</div>
+        <div class="li-inf"><div class="lt">Diagnóstico preñez · Lote 2</div><div class="ls">12 vacas · 10 positivas · 83%</div></div>
+        <div class="li-st ok">Completo</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lir">⏰</div>
+        <div class="li-inf"><div class="lt">Tacto programado · Lote 1</div><div class="ls">12 vacas · Mañana 11/05/2026</div></div>
+        <div class="li-st pe">Pendiente</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lir">🚨</div>
+        <div class="li-inf"><div class="lt">Alerta: Vaca #1045 en celo</div><div class="ls">Detectada hoy · Apta para inseminar</div></div>
+        <div class="li-st al2">Urgente</div>
+      </div>
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin:16px 0 10px;">Presupuestos de servicio</div>
+      <div class="li" onclick="go('presupuesto')">
+        <div class="li-ic lig">📄</div>
+        <div class="li-inf"><div class="lt">Presupuesto #001 · Estancia López</div><div class="ls">20 vacas · OvSynch · Gs. 4.200.000</div></div>
+        <div class="li-st pe">Enviado</div>
+      </div>
+      <div class="li" onclick="go('presupuesto')">
+        <div class="li-ic lig">📄</div>
+        <div class="li-inf"><div class="lt">Presupuesto #002 · Don Carlos</div><div class="ls">10 vacas · IATF · Gs. 2.100.000</div></div>
+        <div class="li-st ok">Aceptado</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-r" onclick="go('form-insem')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ MADRES Y TERNEROS ════ -->
+<div class="screen" id="s-madres">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('repro')">←</button>
+    <span class="ttitle">🐄 Madres y Terneros</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;padding:16px;">
+      <div style="background:#f3e5f5;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#7b1fa2;">42</div><div style="font-size:.7rem;color:#888;">Madres</div></div>
+      <div style="background:#e8f5e9;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#388e3c;">38</div><div style="font-size:.7rem;color:#888;">Terneros</div></div>
+      <div style="background:#e3f2fd;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#1565c0;">12</div><div style="font-size:.7rem;color:#888;">Destetados</div></div>
+      <div style="background:#fff8e1;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#f57c00;">3</div><div style="font-size:.7rem;color:#888;">Alertas</div></div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Registro de madres</div>
+      <div class="li">
+        <div class="li-ic lir">🐄</div>
+        <div class="li-inf">
+          <div class="lt">Caravana #1042 — Vaca Madre</div>
+          <div class="ls">Ternero: #1042-T · Nacido: 15/03/2026 · Lote 2</div>
+        </div>
+        <div class="li-st ok">Al pie</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lir">🐄</div>
+        <div class="li-inf">
+          <div class="lt">Caravana #1058 — Vaca Madre</div>
+          <div class="ls">Ternero: #1058-T · Nacido: 22/03/2026 · Lote 2</div>
+        </div>
+        <div class="li-st ok">Al pie</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lir">🐄</div>
+        <div class="li-inf">
+          <div class="lt">Caravana #1031 — Vaca Madre</div>
+          <div class="ls">Ternero: #1031-T · Nacido: 08/03/2026 · Lote 1</div>
+        </div>
+        <div class="li-st pe">Destete próx.</div>
+      </div>
+      <div class="li">
+        <div class="li-ic" style="background:#fff3e0;font-size:1.1rem;">🍼</div>
+        <div class="li-inf">
+          <div class="lt">Caravana #1019 — Vaca Madre</div>
+          <div class="ls">Sin ternero registrado · Parición esperada: 20/05/2026</div>
+        </div>
+        <div class="li-st al2">Pendiente</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lir">🐄</div>
+        <div class="li-inf">
+          <div class="lt">Caravana #1077 — Vaca Madre</div>
+          <div class="ls">Ternero: #1077-T · Nacido: 01/04/2026 · Lote 3</div>
+        </div>
+        <div class="li-st ok">Al pie</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-r" onclick="alert('➕ Registrar nueva madre/ternero\n\n[Formulario en desarrollo]')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ SEGUIMIENTO POR CARAVANA ════ -->
+<div class="screen" id="s-caravana">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('repro')">←</button>
+    <span class="ttitle">🏷️ Por Caravana</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="padding:16px;">
+      <div style="background:#f5f7fa;border-radius:12px;display:flex;align-items:center;padding:10px 14px;gap:8px;border:1px solid #e0e0e0;">
+        <span style="font-size:1.1rem;">🔍</span>
+        <input type="text" placeholder="Buscar por número de caravana..." style="border:none;background:transparent;flex:1;font-size:.95rem;outline:none;" oninput="filtrarCaravana(this.value)"/>
+      </div>
+    </div>
+    <div class="list-box" id="lista-caravanas">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Animales registrados</div>
+      <div class="li" onclick="go('historial')">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.82rem;">#1042</div>
+        <div class="li-inf"><div class="lt">Vaca Madre · Brahman</div><div class="ls">Lote 2 · Peso: 380 kg · Partos: 3</div></div>
+        <div class="li-st ok">Activa</div>
+      </div>
+      <div class="li" onclick="go('historial')">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.82rem;">#1058</div>
+        <div class="li-inf"><div class="lt">Vaca Madre · Nelore</div><div class="ls">Lote 2 · Peso: 360 kg · Partos: 2</div></div>
+        <div class="li-st ok">Activa</div>
+      </div>
+      <div class="li" onclick="go('historial')">
+        <div style="background:#fff3e0;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#e65100;font-size:.82rem;">#1042T</div>
+        <div class="li-inf"><div class="lt">Ternero · Brahman X</div><div class="ls">Madre: #1042 · Nacido: 15/03/2026 · Lote 2</div></div>
+        <div class="li-st pe">Ternero</div>
+      </div>
+      <div class="li" onclick="go('historial')">
+        <div style="background:#e3f2fd;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#1565c0;font-size:.82rem;">#1031</div>
+        <div class="li-inf"><div class="lt">Vaca Madre · Brahman</div><div class="ls">Lote 1 · Peso: 395 kg · Partos: 4</div></div>
+        <div class="li-st ok">Activa</div>
+      </div>
+      <div class="li" onclick="go('historial')">
+        <div style="background:#fce4ec;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#c62828;font-size:.82rem;">#1019</div>
+        <div class="li-inf"><div class="lt">Vaca Madre · Nelore</div><div class="ls">Lote 1 · Peso: 340 kg · Partos: 1</div></div>
+        <div class="li-st al2">Alerta</div>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ HISTORIAL POR ANIMAL ════ -->
+<div class="screen" id="s-historial">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('caravana')">←</button>
+    <span class="ttitle">📋 Historial — #1042</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="background:linear-gradient(135deg,#4a148c,#7b1fa2);color:#fff;padding:20px 20px 24px;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="background:rgba(255,255,255,.2);border-radius:14px;width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:1.8rem;">🐄</div>
+        <div>
+          <div style="font-size:1.1rem;font-weight:900;">Caravana #1042</div>
+          <div style="font-size:.82rem;opacity:.8;">Vaca Madre · Brahman · Lote 2</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:16px;">
+        <div style="background:rgba(255,255,255,.15);border-radius:10px;padding:10px;text-align:center;"><div style="font-weight:900;">380 kg</div><div style="font-size:.7rem;opacity:.8;">Peso</div></div>
+        <div style="background:rgba(255,255,255,.15);border-radius:10px;padding:10px;text-align:center;"><div style="font-weight:900;">3</div><div style="font-size:.7rem;opacity:.8;">Partos</div></div>
+        <div style="background:rgba(255,255,255,.15);border-radius:10px;padding:10px;text-align:center;"><div style="font-weight:900;">Preñada</div><div style="font-size:.7rem;opacity:.8;">Estado</div></div>
+      </div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:14px;">Línea de tiempo</div>
+      <div style="position:relative;padding-left:24px;">
+        <div style="position:absolute;left:8px;top:0;bottom:0;width:2px;background:#e0e0e0;"></div>
+        <div style="margin-bottom:18px;position:relative;">
+          <div style="position:absolute;left:-20px;top:2px;width:12px;height:12px;border-radius:50%;background:#7b1fa2;border:2px solid #fff;box-shadow:0 0 0 2px #7b1fa2;"></div>
+          <div style="font-size:.82rem;font-weight:700;color:#333;">💉 Inseminación IATF</div>
+          <div style="font-size:.75rem;color:#888;">05/04/2026 · Brahman X · Técnico: Dr. González</div>
+        </div>
+        <div style="margin-bottom:18px;position:relative;">
+          <div style="position:absolute;left:-20px;top:2px;width:12px;height:12px;border-radius:50%;background:#388e3c;border:2px solid #fff;box-shadow:0 0 0 2px #388e3c;"></div>
+          <div style="font-size:.82rem;font-weight:700;color:#333;">✅ Diagnóstico preñez positivo</div>
+          <div style="font-size:.75rem;color:#888;">05/05/2026 · 30 días post-IATF · Tacto rectal</div>
+        </div>
+        <div style="margin-bottom:18px;position:relative;">
+          <div style="position:absolute;left:-20px;top:2px;width:12px;height:12px;border-radius:50%;background:#1565c0;border:2px solid #fff;box-shadow:0 0 0 2px #1565c0;"></div>
+          <div style="font-size:.82rem;font-weight:700;color:#333;">🐄 Parto — Ternero #1042-T</div>
+          <div style="font-size:.75rem;color:#888;">15/03/2026 · Parto normal · Peso ternero: 28 kg</div>
+        </div>
+        <div style="margin-bottom:18px;position:relative;">
+          <div style="position:absolute;left:-20px;top:2px;width:12px;height:12px;border-radius:50%;background:#e65100;border:2px solid #fff;box-shadow:0 0 0 2px #e65100;"></div>
+          <div style="font-size:.82rem;font-weight:700;color:#333;">💊 Vacuna Aftosa</div>
+          <div style="font-size:.75rem;color:#888;">10/01/2026 · Campaña obligatoria · Lote 2</div>
+        </div>
+        <div style="margin-bottom:18px;position:relative;">
+          <div style="position:absolute;left:-20px;top:2px;width:12px;height:12px;border-radius:50%;background:#f57c00;border:2px solid #fff;box-shadow:0 0 0 2px #f57c00;"></div>
+          <div style="font-size:.82rem;font-weight:700;color:#333;">⚖️ Pesaje</div>
+          <div style="font-size:.75rem;color:#888;">15/02/2026 · 375 kg · Lote 2</div>
+        </div>
+        <div style="margin-bottom:18px;position:relative;">
+          <div style="position:absolute;left:-20px;top:2px;width:12px;height:12px;border-radius:50%;background:#7b1fa2;border:2px solid #fff;box-shadow:0 0 0 2px #7b1fa2;"></div>
+          <div style="font-size:.82rem;font-weight:700;color:#333;">💉 Inseminación IATF</div>
+          <div style="font-size:.75rem;color:#888;">10/11/2025 · Brahman X · Técnico: Dr. González</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ SANIDAD Y VACUNAS ════ -->
+<div class="screen" id="s-sanidad">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('repro')">←</button>
+    <span class="ttitle">💊 Sanidad y Vacunas</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:16px;">
+      <div style="background:#e8f5e9;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#2e7d32;">6</div><div style="font-size:.7rem;color:#888;">Al día</div></div>
+      <div style="background:#fff8e1;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#f57c00;">3</div><div style="font-size:.7rem;color:#888;">Próximos</div></div>
+      <div style="background:#fce4ec;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#c62828;">1</div><div style="font-size:.7rem;color:#888;">Vencidos</div></div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Próximas campañas</div>
+      <div class="li">
+        <div style="background:#fff8e1;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">⏰</div>
+        <div class="li-inf"><div class="lt">Vacuna Aftosa — Campaña 2026</div><div class="ls">Todo el rodeo · 80 animales · Vence: 20/05/2026</div></div>
+        <div class="li-st pe">8 días</div>
+      </div>
+      <div class="li">
+        <div style="background:#fff8e1;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">⏰</div>
+        <div class="li-inf"><div class="lt">Brucelosis — Refuerzo</div><div class="ls">Vacas madres · 42 animales · Vence: 01/06/2026</div></div>
+        <div class="li-st pe">20 días</div>
+      </div>
+      <div class="li">
+        <div style="background:#fce4ec;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🚨</div>
+        <div class="li-inf"><div class="lt">Carbunclo — Lote 3</div><div class="ls">18 animales · Venció: 01/05/2026</div></div>
+        <div class="li-st al2">Vencida</div>
+      </div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Últimas aplicaciones</div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">✅</div>
+        <div class="li-inf"><div class="lt">Ivermectina — Antiparasitario</div><div class="ls">Todo el rodeo · 80 animales · 10/04/2026</div></div>
+        <div class="li-st ok">Aplicada</div>
+      </div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">✅</div>
+        <div class="li-inf"><div class="lt">Aftosa — Campaña 2025</div><div class="ls">Todo el rodeo · 75 animales · 15/11/2025</div></div>
+        <div class="li-st ok">Aplicada</div>
+      </div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">✅</div>
+        <div class="li-inf"><div class="lt">Vitaminas A, D, E</div><div class="ls">Terneros · 38 animales · 01/04/2026</div></div>
+        <div class="li-st ok">Aplicada</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-r" onclick="alert('➕ Registrar nueva vacuna/sanidad\n\n[Formulario en desarrollo]')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ PREÑEZ Y DESTETE ════ -->
+<div class="screen" id="s-prenez">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('repro')">←</button>
+    <span class="ttitle">🤰 Preñez y Destete</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:16px;">
+      <div style="background:#fce4ec;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#c2185b;">28</div><div style="font-size:.7rem;color:#888;">Preñadas</div></div>
+      <div style="background:#fff8e1;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#f57c00;">6</div><div style="font-size:.7rem;color:#888;">Para destetar</div></div>
+      <div style="background:#e8f5e9;border-radius:12px;padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:900;color:#2e7d32;">12</div><div style="font-size:.7rem;color:#888;">Destetados</div></div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Pariciones esperadas</div>
+      <div class="li">
+        <div style="background:#fce4ec;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🤰</div>
+        <div class="li-inf"><div class="lt">Caravana #1019 — Parto esperado</div><div class="ls">20/05/2026 · 9 días · Lote 1 · 1er parto</div></div>
+        <div class="li-st al2">Próximo</div>
+      </div>
+      <div class="li">
+        <div style="background:#fce4ec;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🤰</div>
+        <div class="li-inf"><div class="lt">Caravana #1055 — Parto esperado</div><div class="ls">28/05/2026 · 17 días · Lote 2 · 2do parto</div></div>
+        <div class="li-st pe">17 días</div>
+      </div>
+      <div class="li">
+        <div style="background:#fce4ec;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🤰</div>
+        <div class="li-inf"><div class="lt">Caravana #1042 — Parto esperado</div><div class="ls">15/01/2027 · 8 meses · Lote 2 · 4to parto</div></div>
+        <div class="li-st ok">Confirmada</div>
+      </div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Destete pendiente</div>
+      <div class="li">
+        <div style="background:#fff3e0;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🐂</div>
+        <div class="li-inf"><div class="lt">Ternero #1031-T</div><div class="ls">Nacido: 08/03/2026 · 64 días · Peso: 72 kg · Lote 1</div></div>
+        <div class="li-st pe">Destetar ya</div>
+      </div>
+      <div class="li">
+        <div style="background:#fff3e0;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🐂</div>
+        <div class="li-inf"><div class="lt">Ternero #1044-T</div><div class="ls">Nacido: 12/03/2026 · 60 días · Peso: 68 kg · Lote 1</div></div>
+        <div class="li-st pe">Destetar ya</div>
+      </div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🐂</div>
+        <div class="li-inf"><div class="lt">Ternero #1042-T</div><div class="ls">Nacido: 15/03/2026 · 57 días · Peso: 65 kg · Lote 2</div></div>
+        <div class="li-st ok">En 3 días</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-r" onclick="alert('➕ Registrar destete\n\n[Formulario en desarrollo]')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ PROPUESTA COMERCIAL ════ -->
+<div class="screen" id="s-propuesta">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('home')">←</button>
+    <span class="ttitle">📋 Propuesta Comercial</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:40px;">
+
+    <div style="background:linear-gradient(135deg,#0d2a6e,#1565c0);color:#fff;padding:28px 20px 24px;">
+      <div style="font-size:.7rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;opacity:.6;margin-bottom:8px;">IsabSoft · Plataforma Agroganadera</div>
+      <div style="font-size:1.4rem;font-weight:900;line-height:1.3;">Sistema de Gestión<br>Cría & Engorde</div>
+      <div style="font-size:.85rem;opacity:.8;margin-top:6px;">Preparado especialmente para tu establecimiento</div>
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+        <div style="background:rgba(255,255,255,.15);border-radius:20px;padding:4px 12px;font-size:.72rem;">📱 Móvil y PC</div>
+        <div style="background:rgba(255,255,255,.15);border-radius:20px;padding:4px 12px;font-size:.72rem;">📶 Funciona sin internet</div>
+        <div style="background:rgba(255,255,255,.15);border-radius:20px;padding:4px 12px;font-size:.72rem;">💬 Chat con IA</div>
+      </div>
+    </div>
+
+    <div style="padding:16px;">
+
+      <div style="font-size:.67rem;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#888;margin-bottom:10px;">Fase 1 — Sistema base</div>
+
+      <div style="background:#f5f7fa;border-radius:14px;padding:16px;margin-bottom:12px;">
+        <div style="font-size:.8rem;font-weight:900;color:#7b1fa2;margin-bottom:10px;">🐄 ReproGan — Módulo Cría</div>
+        <div style="font-size:.82rem;color:#444;line-height:2;">
+          ✅ Control de madres y terneros<br>
+          ✅ Servicios e inseminación artificial<br>
+          ✅ Seguimiento por caravana<br>
+          ✅ Sanidad y vacunas<br>
+          ✅ Control de preñez y destete<br>
+          ✅ Historial completo por animal
+        </div>
+      </div>
+
+      <div style="background:#f5f7fa;border-radius:14px;padding:16px;margin-bottom:12px;">
+        <div style="font-size:.8rem;font-weight:900;color:#bf360c;margin-bottom:10px;">⚖️ AgroSoft — Módulo Engorde</div>
+        <div style="font-size:.82rem;color:#444;line-height:2;">
+          ✅ Control de kilos y ganancia diaria (GDP)<br>
+          ✅ Costos de alimentación por lote<br>
+          ✅ Compras y ventas de animales<br>
+          ✅ Resultado neto por animal y por lote<br>
+          ✅ Alertas de peso óptimo para venta<br>
+          ✅ Stock de insumos y alimentación
+        </div>
+      </div>
+
+      <div style="background:#f5f7fa;border-radius:14px;padding:16px;margin-bottom:12px;">
+        <div style="font-size:.8rem;font-weight:900;color:#1565c0;margin-bottom:10px;">🤖 IA Chat + Funcionalidades generales</div>
+        <div style="font-size:.82rem;color:#444;line-height:2;">
+          ✅ Asistente conversacional inteligente<br>
+          ✅ Registro por lenguaje natural<br>
+          ✅ Funciona sin internet (offline)<br>
+          ✅ Sincronización automática al reconectar<br>
+          ✅ Dashboard con alertas del ciclo completo<br>
+          ✅ Presupuestos de servicio por WhatsApp
+        </div>
+      </div>
+
+      <div style="background:#fff8e1;border-radius:14px;padding:16px;margin-bottom:12px;border:1px dashed #f57c00;">
+        <div style="font-size:.8rem;font-weight:900;color:#e65100;margin-bottom:8px;">🚀 Fase 2 — WhatsApp integrado</div>
+        <div style="font-size:.82rem;color:#555;line-height:1.8;">
+          El peón o encargado envía un mensaje de WhatsApp y el sistema registra automáticamente:<br><br>
+          <span style="background:#e8f5e9;border-radius:8px;padding:6px 10px;display:inline-block;font-style:italic;color:#2e7d32;">"Pesé lote 3, promedio 425 kg"</span><br><br>
+          ✓ Recibe el dato · ✓ Interpreta · ✓ Guarda · ✓ Responde confirmación
+        </div>
+      </div>
+
+      <div style="background:#fff;border:2px solid #1565c0;border-radius:16px;padding:20px;margin-bottom:12px;">
+        <div style="font-size:.67rem;font-weight:900;text-transform:uppercase;letter-spacing:2px;color:#888;margin-bottom:12px;">Inversión</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+          <div style="font-size:.88rem;color:#333;">Fase 1 — Sistema completo</div>
+          <div style="font-weight:900;color:#1565c0;">Gs. 5.000.000</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+          <div style="font-size:.88rem;color:#333;">Fase 2 — WhatsApp integrado</div>
+          <div style="font-weight:900;color:#1565c0;">Gs. 2.000.000</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+          <div style="font-size:.88rem;color:#333;">Mantenimiento mensual</div>
+          <div style="font-weight:900;color:#1565c0;">Gs. 250.000/mes</div>
+        </div>
+        <div style="background:#e3f2fd;border-radius:10px;padding:12px;margin-top:12px;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:.75rem;color:#1565c0;font-weight:700;">Para iniciar hoy</div>
+            <div style="font-size:.72rem;color:#888;">50% al confirmar · 50% al entregar</div>
+          </div>
+          <div style="font-size:1.3rem;font-weight:900;color:#1565c0;">Gs. 2.500.000</div>
+        </div>
+      </div>
+
+      <div style="background:#e8f5e9;border-radius:14px;padding:16px;margin-bottom:12px;">
+        <div style="font-size:.8rem;font-weight:900;color:#2e7d32;margin-bottom:8px;">⏱ Tiempo de entrega</div>
+        <div style="font-size:.82rem;color:#444;line-height:2;">
+          📅 Fase 1: <strong>15 días hábiles</strong><br>
+          📅 Fase 2: <strong>30 días hábiles</strong><br>
+          🛠 Instalación y capacitación: <strong>incluida</strong><br>
+          📞 Soporte post-entrega: <strong>30 días gratis</strong>
+        </div>
+      </div>
+
+      <button onclick="abrirWhatsApp()" style="width:100%;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:30px;padding:16px;font-size:1rem;font-weight:900;cursor:pointer;margin-bottom:10px;">
+        💬 Confirmar por WhatsApp
+      </button>
+      <div style="text-align:center;font-size:.75rem;color:#888;">IsabSoft · Paraguay · +595 981 153477</div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ════ FORM INSEMINACIÓN ════ -->
+<div class="screen" id="s-form-insem">
+  <div class="topbar"><button class="back-btn" onclick="go('repro')">←</button><span class="ttitle">💉 Nueva Inseminación</span></div>
+  <div class="form-body">
+    <div class="f-card">
+      <h3>📋 Datos del lote</h3>
+      <div class="f-row">
+        <div class="ff"><label>Fecha</label><input type="date" value="2026-05-10"/></div>
+        <div class="ff"><label>Lote</label><select><option>Lote 4</option><option>Lote 1</option><option>Lote 2</option><option>Lote 3</option></select></div>
+      </div>
+      <div class="f-row">
+        <div class="ff"><label>Cantidad de vacas</label><input type="number" value="8"/></div>
+        <div class="ff"><label>Responsable</label><input type="text" value="Juan Ramírez"/></div>
+      </div>
+    </div>
+    <div class="f-card">
+      <h3>🧬 Datos reproductivos</h3>
+      <div class="ff"><label>Protocolo</label>
+        <select><option>IATF — OvSynch</option><option>IATF — Co-Synch</option><option>IA celo natural</option><option>IATF — Select Synch</option></select>
+      </div>
+      <div class="f-row">
+        <div class="ff"><label>Semen / Toro</label><input type="text" value="Brahman X — BX001"/></div>
+        <div class="ff"><label>Pajuelas usadas</label><input type="number" value="8"/></div>
+      </div>
+      <div class="ff"><label>Técnico inseminador</label><input type="text" value="Dr. Carlos Vera"/></div>
+    </div>
+    <div class="f-card">
+      <h3>📝 Observaciones</h3>
+      <div class="ff"><textarea>Buenas condiciones. Vacas en buen estado corporal.</textarea></div>
+    </div>
+    <button class="btn-save btn-r" onclick="saveInsem()">✓ Guardar registro de inseminación</button>
+  </div>
+</div>
+
+<!-- ════ PRESUPUESTO ════ -->
+<div class="screen" id="s-presupuesto">
+  <div class="topbar"><button class="back-btn" onclick="go('repro')">←</button><span class="ttitle">📄 Presupuesto de servicio</span></div>
+  <div class="pres-wrap">
+    <div class="pres-doc">
+      <div class="pres-top">
+        <div><div class="pb">Isab<em>Soft</em> | ReproGan</div><div class="ps">Servicio de Inseminación Artificial</div><div class="ps">Tel: +595 981 123 456</div></div>
+        <div class="pn"><div><strong>Presupuesto #001</strong></div><div>10/05/2026</div><div>Válido: 15 días</div></div>
+      </div>
+      <div class="pc-box">
+        <div class="pc-l">Cliente</div>
+        <div class="pc-n">Estancia López — Sr. Pedro López</div>
+        <div class="pc-s">+595 982 654 321 · Caaguazú, Paraguay</div>
+      </div>
+      <table class="pt">
+        <thead><tr><th>Servicio</th><th>Cant.</th><th>P. Unit.</th><th>Total</th></tr></thead>
+        <tbody>
+          <tr><td>Protocolo OvSynch</td><td>20</td><td>Gs. 85.000</td><td>Gs. 1.700.000</td></tr>
+          <tr><td>Inseminación artificial</td><td>20</td><td>Gs. 75.000</td><td>Gs. 1.500.000</td></tr>
+          <tr><td>Diagnóstico de preñez</td><td>20</td><td>Gs. 35.000</td><td>Gs. 700.000</td></tr>
+          <tr><td>Semen Brahman X (pajuela)</td><td>20</td><td>Gs. 15.000</td><td>Gs. 300.000</td></tr>
+        </tbody>
+      </table>
+      <div class="pres-total">
+        <div class="pt-box">
+          <div class="ptl">Total a pagar</div>
+          <div class="ptv">Gs. 4.200.000</div>
+          <div class="pts">≈ USD 560</div>
+        </div>
+      </div>
+      <p class="pres-note">* Incluye visita a campo, materiales, ejecución y diagnóstico de preñez a los 30 días.</p>
+      <div class="pres-acts">
+        <button class="pa-btn pa-sh" onclick="alert('✅ Presupuesto enviado por WhatsApp a Pedro López')">📱 Enviar WhatsApp</button>
+        <button class="pa-btn pa-pr" onclick="window.print()">🖨️ PDF / Imprimir</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════ AGROSOFT ════ -->
+<div class="screen" id="s-agro">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('home')">←</button>
+    <span class="ttitle">🐄 AgroSoft</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div class="mod-header ah">
+      <h1>IsabSoft | AgroSoft</h1>
+      <p>Compra, venta y gestión de animales</p>
+      <div class="stat-strip">
+        <div class="stat-p"><div class="sv">847</div><div class="sl">Animales</div></div>
+        <div class="stat-p"><div class="sv">15</div><div class="sl">Vendidos hoy</div></div>
+        <div class="stat-p"><div class="sv">Gs.48M</div><div class="sl">Ventas mes</div></div>
+        <div class="stat-p"><div class="sv">3</div><div class="sl">Pendientes</div></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:16px;">
+      <button onclick="go('kilos')" style="background:linear-gradient(135deg,#7b1900,#bf360c);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">⚖️</div>
+        <div style="font-weight:800;font-size:.88rem;">Kilos y Ganancias</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">GDP: 0.85 kg/día · Lote 3</div>
+      </button>
+      <button onclick="go('alimentacion')" style="background:linear-gradient(135deg,#33691e,#558b2f);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">🌽</div>
+        <div style="font-weight:800;font-size:.88rem;">Costos Alimentación</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">Gs. 4.200/animal/día</div>
+      </button>
+      <button onclick="go('resultados')" style="background:linear-gradient(135deg,#1a237e,#283593);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">📊</div>
+        <div style="font-weight:800;font-size:.88rem;">Resultados por Lote</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">Margen: 18% · Lote 3</div>
+      </button>
+      <button onclick="go('form-compra')" style="background:linear-gradient(135deg,#4e342e,#6d4c41);border:none;border-radius:14px;padding:16px;color:#fff;text-align:left;cursor:pointer;">
+        <div style="font-size:1.5rem;margin-bottom:6px;">🛒</div>
+        <div style="font-weight:800;font-size:.88rem;">Compra / Venta</div>
+        <div style="font-size:.72rem;opacity:.8;margin-top:2px;">15 vendidos hoy</div>
+      </button>
+    </div>
+    <div class="list-box">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;">
+        <button class="qa" onclick="go('form-venta')"><div class="qa-i">💰</div><div class="qa-l">Venta</div></button>
+        <button class="qa" onclick="go('form-compra')"><div class="qa-i">🛒</div><div class="qa-l">Compra</div></button>
+        <button class="qa" onclick="go('kilos')"><div class="qa-i">⚖️</div><div class="qa-l">Pesaje</div></button>
+        <button class="qa" onclick="go('resultados')"><div class="qa-i">📊</div><div class="qa-l">Reporte</div></button>
+      </div>
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Movimientos recientes</div>
+      <div class="li">
+        <div class="li-ic lia">💰</div>
+        <div class="li-inf"><div class="lt">Venta · 15 novillos</div><div class="ls">Juan López · Gs. 6.750.000 · 10/05/2026</div></div>
+        <div class="li-st ok">Cobrado</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lia">🛒</div>
+        <div class="li-inf"><div class="lt">Compra · 30 terneros</div><div class="ls">Estancia Norte · Gs. 9.000.000</div></div>
+        <div class="li-st ok">Ingresado</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lia">⚖️</div>
+        <div class="li-inf"><div class="lt">Pesaje · Lote 3</div><div class="ls">25 novillos · Promedio 420 kg</div></div>
+        <div class="li-st ok">Registrado</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lia">🚨</div>
+        <div class="li-inf"><div class="lt">Faena pendiente</div><div class="ls">8 animales · Frigorífico Central · 12/05/2026</div></div>
+        <div class="li-st pe">Pendiente</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-a" onclick="go('form-venta')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ KILOS Y GANANCIAS ════ -->
+<div class="screen" id="s-kilos">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('agro')">←</button>
+    <span class="ttitle">⚖️ Kilos y Ganancias</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px;">
+      <div style="background:#fff3e0;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.5rem;font-weight:900;color:#e65100;">420 kg</div><div style="font-size:.72rem;color:#888;">Peso prom. actual</div></div>
+      <div style="background:#e8f5e9;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.5rem;font-weight:900;color:#2e7d32;">0.85 kg</div><div style="font-size:.72rem;color:#888;">Ganancia diaria</div></div>
+      <div style="background:#e3f2fd;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.5rem;font-weight:900;color:#1565c0;">95 días</div><div style="font-size:.72rem;color:#888;">En engorde</div></div>
+      <div style="background:#fce4ec;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.5rem;font-weight:900;color:#c62828;">+81 kg</div><div style="font-size:.72rem;color:#888;">Ganancia total</div></div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Seguimiento por lote</div>
+      <div class="li">
+        <div style="background:#fff3e0;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#e65100;font-size:.82rem;">L3</div>
+        <div class="li-inf">
+          <div class="lt">Lote 3 — 25 novillos</div>
+          <div class="ls">Ingreso: 339 kg · Actual: 420 kg · GDP: 0.85 kg/día</div>
+        </div>
+        <div class="li-st ok">+81 kg</div>
+      </div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.82rem;">L1</div>
+        <div class="li-inf">
+          <div class="lt">Lote 1 — 18 novillos</div>
+          <div class="ls">Ingreso: 310 kg · Actual: 395 kg · GDP: 0.92 kg/día</div>
+        </div>
+        <div class="li-st ok">+85 kg</div>
+      </div>
+      <div class="li">
+        <div style="background:#e3f2fd;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#1565c0;font-size:.82rem;">L5</div>
+        <div class="li-inf">
+          <div class="lt">Lote 5 — 30 terneros</div>
+          <div class="ls">Ingreso: 180 kg · Actual: 220 kg · GDP: 0.67 kg/día</div>
+        </div>
+        <div class="li-st pe">+40 kg</div>
+      </div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Últimos pesajes</div>
+      <div class="li">
+        <div class="li-ic lia">⚖️</div>
+        <div class="li-inf"><div class="lt">Pesaje Lote 3 — 25 novillos</div><div class="ls">10/05/2026 · Prom: 420 kg · Total: 10.500 kg</div></div>
+        <div class="li-st ok">Registrado</div>
+      </div>
+      <div class="li">
+        <div class="li-ic lia">⚖️</div>
+        <div class="li-inf"><div class="lt">Pesaje Lote 1 — 18 novillos</div><div class="ls">08/05/2026 · Prom: 395 kg · Total: 7.110 kg</div></div>
+        <div class="li-st ok">Registrado</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-a" onclick="alert('➕ Registrar pesaje\n\n[Formulario en desarrollo]')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ COSTOS ALIMENTACIÓN ════ -->
+<div class="screen" id="s-alimentacion">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('agro')">←</button>
+    <span class="ttitle">🌽 Costos Alimentación</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px;">
+      <div style="background:#f1f8e9;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#33691e;">Gs. 4.200</div><div style="font-size:.72rem;color:#888;">Costo/animal/día</div></div>
+      <div style="background:#fff3e0;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#e65100;">Gs. 8.6M</div><div style="font-size:.72rem;color:#888;">Costo total mes</div></div>
+      <div style="background:#e8f5e9;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#2e7d32;">2.450 kg</div><div style="font-size:.72rem;color:#888;">Stock balanceado</div></div>
+      <div style="background:#e3f2fd;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#1565c0;">12 días</div><div style="font-size:.72rem;color:#888;">Stock restante</div></div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Costo por lote — Mayo 2026</div>
+      <div class="li">
+        <div style="background:#f1f8e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#33691e;font-size:.82rem;">L3</div>
+        <div class="li-inf">
+          <div class="lt">Lote 3 — 25 novillos · 95 días</div>
+          <div class="ls">Gs. 4.200/día · Total acumulado: Gs. 9.975.000</div>
+        </div>
+        <div class="li-st ok">Gs. 399k/animal</div>
+      </div>
+      <div class="li">
+        <div style="background:#f1f8e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#33691e;font-size:.82rem;">L1</div>
+        <div class="li-inf">
+          <div class="lt">Lote 1 — 18 novillos · 92 días</div>
+          <div class="ls">Gs. 4.200/día · Total acumulado: Gs. 6.955.200</div>
+        </div>
+        <div class="li-st ok">Gs. 386k/animal</div>
+      </div>
+      <div class="li">
+        <div style="background:#f1f8e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#33691e;font-size:.82rem;">L5</div>
+        <div class="li-inf">
+          <div class="lt">Lote 5 — 30 terneros · 60 días</div>
+          <div class="ls">Gs. 3.500/día · Total acumulado: Gs. 6.300.000</div>
+        </div>
+        <div class="li-st ok">Gs. 210k/animal</div>
+      </div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Últimas compras de insumos</div>
+      <div class="li">
+        <div class="li-ic" style="background:#f1f8e9;font-size:1.1rem;">🌽</div>
+        <div class="li-inf"><div class="lt">Balanceado engorde — 3.000 kg</div><div class="ls">Proveedor: AgroNorte · Gs. 2.850/kg · 01/05/2026</div></div>
+        <div class="li-st ok">Gs. 8.550.000</div>
+      </div>
+      <div class="li">
+        <div class="li-ic" style="background:#f1f8e9;font-size:1.1rem;">🌾</div>
+        <div class="li-inf"><div class="lt">Silo de maíz — 5.000 kg</div><div class="ls">Proveedor: Campo Verde · Gs. 850/kg · 15/04/2026</div></div>
+        <div class="li-st ok">Gs. 4.250.000</div>
+      </div>
+    </div>
+  </div>
+  <button class="fab fab-a" onclick="alert('➕ Registrar compra de insumo\n\n[Formulario en desarrollo]')">+</button>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ RESULTADOS POR LOTE ════ -->
+<div class="screen" id="s-resultados">
+  <div class="topbar">
+    <button class="back-btn" onclick="go('agro')">←</button>
+    <span class="ttitle">📊 Resultados por Lote</span>
+    <span class="badge-on">● Online</span>
+  </div>
+  <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px;">
+      <div style="background:#e8f5e9;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#2e7d32;">Gs. 48.6M</div><div style="font-size:.72rem;color:#888;">Ventas totales</div></div>
+      <div style="background:#fce4ec;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#c62828;">Gs. 39.8M</div><div style="font-size:.72rem;color:#888;">Inversión total</div></div>
+      <div style="background:#e3f2fd;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#1565c0;">Gs. 8.8M</div><div style="font-size:.72rem;color:#888;">Resultado neto</div></div>
+      <div style="background:#fff8e1;border-radius:12px;padding:14px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#f57c00;">18%</div><div style="font-size:.72rem;color:#888;">Margen</div></div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Resultado por lote</div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.82rem;">L3</div>
+        <div class="li-inf">
+          <div class="lt">Lote 3 — 25 novillos — En engorde</div>
+          <div class="ls">Compra: Gs. 16.5M · Alimento: Gs. 9.975M · Venta proyectada: Gs. 31.5M</div>
+        </div>
+        <div class="li-st ok">+Gs. 5.0M</div>
+      </div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.82rem;">L2</div>
+        <div class="li-inf">
+          <div class="lt">Lote 2 — 20 novillos — Vendido</div>
+          <div class="ls">Compra: Gs. 12.2M · Alimento: Gs. 7.1M · Venta: Gs. 22.8M</div>
+        </div>
+        <div class="li-st ok">+Gs. 3.5M</div>
+      </div>
+      <div class="li">
+        <div style="background:#e3f2fd;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#1565c0;font-size:.82rem;">L1</div>
+        <div class="li-inf">
+          <div class="lt">Lote 1 — 18 novillos — En engorde</div>
+          <div class="ls">Compra: Gs. 11.0M · Alimento: Gs. 6.955M · Venta proyectada: Gs. 21.2M</div>
+        </div>
+        <div class="li-st pe">+Gs. 3.2M</div>
+      </div>
+    </div>
+    <div class="list-box">
+      <div style="font-size:.67rem;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--sub);margin-bottom:10px;">Resultado por animal (caravana)</div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.75rem;">#1042</div>
+        <div class="li-inf"><div class="lt">Novillo #1042 — Lote 3</div><div class="ls">Compra: 339 kg · Venta proy: 450 kg · GDP: 0.85 kg/día</div></div>
+        <div class="li-st ok">+111 kg</div>
+      </div>
+      <div class="li">
+        <div style="background:#e8f5e9;border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2e7d32;font-size:.75rem;">#1058</div>
+        <div class="li-inf"><div class="lt">Novillo #1058 — Lote 3</div><div class="ls">Compra: 345 kg · Venta proy: 460 kg · GDP: 0.89 kg/día</div></div>
+        <div class="li-st ok">+115 kg</div>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
+    <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
+    <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+  </div>
+</div>
+
+<!-- ════ FORM VENTA ════ -->
+<div class="screen" id="s-form-venta">
+  <div class="topbar"><button class="back-btn" onclick="go('agro')">←</button><span class="ttitle">💰 Nueva Venta</span></div>
+  <div class="form-body">
+    <div class="f-card">
+      <h3>🧾 Datos de la venta</h3>
+      <div class="f-row">
+        <div class="ff"><label>Fecha</label><input type="date" value="2026-05-10"/></div>
+        <div class="ff"><label>Tipo animal</label><select><option>Novillos</option><option>Vacas</option><option>Terneros</option><option>Toros</option></select></div>
+      </div>
+      <div class="f-row">
+        <div class="ff"><label>Cantidad</label><input type="number" value="15"/></div>
+        <div class="ff"><label>Peso prom. (kg)</label><input type="number" value="420"/></div>
+      </div>
+      <div class="f-row">
+        <div class="ff"><label>Precio / kg (Gs.)</label><input type="number" value="1800"/></div>
+        <div class="ff"><label>Total (Gs.)</label><input type="text" value="11.340.000" readonly style="background:#f5f5f5;font-weight:800;color:var(--azul);"/></div>
+      </div>
+    </div>
+    <div class="f-card">
+      <h3>👤 Cliente</h3>
+      <div class="ff"><label>Nombre</label><input type="text" value="Juan López"/></div>
+      <div class="f-row">
+        <div class="ff"><label>RUC / CI</label><input type="text" value="3.456.789-1"/></div>
+        <div class="ff"><label>Teléfono</label><input type="text" value="+595 981 456 789"/></div>
+      </div>
+      <div class="ff"><label>Forma de pago</label><select><option>Contado</option><option>Cheque</option><option>Transferencia</option><option>Crédito 30 días</option></select></div>
+    </div>
+    <div class="f-card">
+      <h3>🚚 Despacho</h3>
+      <div class="ff"><label>Destino</label><input type="text" value="Frigorífico Central — CDE"/></div>
+      <div class="f-row">
+        <div class="ff"><label>Fecha despacho</label><input type="date" value="2026-05-11"/></div>
+        <div class="ff"><label>Transportista</label><input type="text" value="Juan Fleitas"/></div>
+      </div>
+    </div>
+    <button class="btn-save btn-a" onclick="saveVenta()">✓ Confirmar y guardar venta</button>
+  </div>
+</div>
+
+<!-- ════ FORM COMPRA ════ -->
+<div class="screen" id="s-form-compra">
+  <div class="topbar"><button class="back-btn" onclick="go('agro')">←</button><span class="ttitle">🛒 Nueva Compra</span></div>
+  <div class="form-body">
+    <div class="f-card">
+      <h3>🧾 Datos de la compra</h3>
+      <div class="f-row">
+        <div class="ff"><label>Fecha</label><input type="date" value="2026-05-10"/></div>
+        <div class="ff"><label>Tipo animal</label><select><option>Vacas</option><option>Terneros</option><option>Novillos</option><option>Toros</option></select></div>
+      </div>
+      <div class="f-row">
+        <div class="ff"><label>Cantidad</label><input type="number" value="100"/></div>
+        <div class="ff"><label>Peso prom. (kg)</label><input type="number" value="380"/></div>
+      </div>
+      <div class="f-row">
+        <div class="ff"><label>Precio / kg (Gs.)</label><input type="number" value="1500"/></div>
+        <div class="ff"><label>Total (Gs.)</label><input type="text" value="57.000.000" readonly style="background:#f5f5f5;font-weight:800;color:var(--azul);"/></div>
+      </div>
+    </div>
+    <div class="f-card">
+      <h3>🏠 Proveedor</h3>
+      <div class="ff"><label>Nombre</label><input type="text" value="Estancia Norte"/></div>
+      <div class="f-row">
+        <div class="ff"><label>RUC</label><input type="text" value="5.678.901-2"/></div>
+        <div class="ff"><label>Teléfono</label><input type="text" value="+595 982 111 222"/></div>
+      </div>
+    </div>
+    <div class="f-card">
+      <h3>📦 Ingreso al establecimiento</h3>
+      <div class="f-row">
+        <div class="ff"><label>Lote destino</label><select><option>Lote 5</option><option>Lote 1</option><option>Lote 2</option><option>Lote 3</option></select></div>
+        <div class="ff"><label>Fecha ingreso</label><input type="date" value="2026-05-11"/></div>
+      </div>
+    </div>
+    <button class="btn-save btn-a" onclick="saveCompra()">✓ Confirmar y registrar compra</button>
+  </div>
+</div>
+
+</div><!-- /content -->
+</div><!-- /app -->
+
+<script>
+const SCREENS={home:'s-home',login:'s-login',chat:'s-chat',repro:'s-repro','form-insem':'s-form-insem',presupuesto:'s-presupuesto',agro:'s-agro','form-venta':'s-form-venta','form-compra':'s-form-compra',madres:'s-madres',caravana:'s-caravana',historial:'s-historial',sanidad:'s-sanidad',prenez:'s-prenez',kilos:'s-kilos',alimentacion:'s-alimentacion',resultados:'s-resultados',propuesta:'s-propuesta'};
+function abrirWhatsApp(){window.open('https://wa.me/595981153477?text=Hola%21+Quiero+confirmar+el+desarrollo+del+sistema+IsabSoft+para+mi+establecimiento.','_blank');}
+function go(n){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));const el=document.getElementById(SCREENS[n]);if(el)el.classList.add('active');window.scrollTo(0,0);}
+
+function parse(txt){
+  const t=txt.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const nums=t.match(/\d+/g);const cant=nums?parseInt(nums[0]):null;
+  const loteM=t.match(/lote\s*(\d+)/);const lote=loteM?loteM[1]:null;
+  const precios=(txt.match(/\d[\d\.]*/g)||[]).map(p=>parseInt(p.replace(/\./g,''))).filter(p=>p>999);
+  let animal='animal';
+  if(/vaca|vacas/.test(t))animal='vaca';
+  else if(/novillo|novillos/.test(t))animal='novillo';
+  else if(/ternero|terneros/.test(t))animal='ternero';
+  else if(/toro|toros/.test(t))animal='toro';
+  let accion=null;
+  if(/insemina/.test(t))accion='insem';
+  else if(/compr|adquir|realice compra/.test(t))accion='compra';
+  else if(/vend|venta/.test(t))accion='venta';
+  else if(/gasto|combustible|balanceado|pague|insumo/.test(t))accion='gasto';
+  else if(/tacto|tactarse|diagnostico/.test(t))accion='repro';
+  else if(/pajuela|semen|stock/.test(t))accion='stock';
+  else if(/gastos|reporte|resumen/.test(t))accion='reporte';
+  else if(/parto|pario/.test(t))accion='parto';
+  else if(/movi|traslad/.test(t))accion='mov';
+  return{cant,lote,animal,accion,precios,raw:txt};
+}
+
+function buildResp(p){
+  const{cant,lote,animal,accion,precios,raw}=p;
+  const f=new Date().toLocaleDateString('es-PY');
+  const n=cant||'?';const lot=lote?`Lote ${lote}`:'sin especificar';const pr=precios[0]||0;
+  const btnStyle=(color,bg)=>`flex:1;padding:10px;background:${bg};color:${color};border:none;border-radius:20px;font-weight:800;cursor:pointer;`;
+
+  if(accion==='compra'){
+    const total=pr&&cant?pr*cant:0;
+    return{m:`🛒 <strong>Compra detectada</strong> — confirmá para registrar`,
+    c:`<div style="background:#fff7ed;border:2px solid #fed7aa;border-radius:14px;padding:14px;margin-top:10px;">
+      <div style="font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#92400e;margin-bottom:10px;">🛒 Compra de animales</div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Tipo: <b>${animal}s</b></div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Cantidad: <b>${n} ${animal}s</b></div>
+      ${lote?`<div style="font-size:.85rem;margin-bottom:4px;">Lote destino: <b>${lot}</b></div>`:''}
+      ${pr?`<div style="font-size:.85rem;margin-bottom:4px;">Precio unitario: <b>Gs. ${pr.toLocaleString('es')}</b></div>`:''}
+      ${total?`<div style="font-size:.85rem;margin-bottom:4px;">Total estimado: <b>Gs. ${total.toLocaleString('es')}</b></div>`:''}
+      <div style="font-size:.85rem;margin-bottom:4px;">Fecha: <b>${f}</b></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="confirmar('compra',${n},'${animal}')" style="${btnStyle('#fff','#16a34a')}">✓ Confirmar</button>
+        <button onclick="go('form-compra')" style="${btnStyle('#374151','#e5e7eb')}">✏️ Editar</button>
+      </div></div>`};
+  }
+  if(accion==='venta'){
+    const total=pr&&cant?pr*cant:0;
+    return{m:`💰 <strong>Venta detectada</strong> — confirmá para registrar`,
+    c:`<div style="background:#eff6ff;border:2px solid #bfdbfe;border-radius:14px;padding:14px;margin-top:10px;">
+      <div style="font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1e40af;margin-bottom:10px;">💰 Venta de animales</div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Tipo: <b>${animal}s</b></div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Cantidad: <b>${n} ${animal}s</b></div>
+      ${pr?`<div style="font-size:.85rem;margin-bottom:4px;">Precio/kg: <b>Gs. ${pr.toLocaleString('es')}</b></div>`:''}
+      ${total?`<div style="font-size:.85rem;margin-bottom:4px;">Total estimado: <b>Gs. ${total.toLocaleString('es')}</b></div>`:''}
+      <div style="font-size:.85rem;margin-bottom:4px;">Fecha: <b>${f}</b></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="confirmar('venta',${n},'${animal}')" style="${btnStyle('#fff','#16a34a')}">✓ Confirmar</button>
+        <button onclick="go('form-venta')" style="${btnStyle('#374151','#e5e7eb')}">✏️ Editar</button>
+      </div></div>`};
+  }
+  if(accion==='insem'){
+    return{m:`💉 <strong>Inseminación detectada</strong> — confirmá para registrar`,
+    c:`<div style="background:#fdf4ff;border:2px solid #e9d5ff;border-radius:14px;padding:14px;margin-top:10px;">
+      <div style="font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#6b21a8;margin-bottom:10px;">💉 Inseminación artificial</div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Cantidad: <b>${n} ${animal}s</b></div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Lote: <b>${lot}</b></div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Técnico: <b>Juan Ramírez</b></div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Fecha: <b>${f}</b></div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Diagnóstico programado: <b>30 días</b></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="confirmar('insem',${n},'${animal}')" style="${btnStyle('#fff','#16a34a')}">✓ Confirmar</button>
+        <button onclick="go('form-insem')" style="${btnStyle('#374151','#e5e7eb')}">✏️ Editar</button>
+      </div></div>`};
+  }
+  if(accion==='gasto'){
+    return{m:`💸 <strong>Gasto detectado</strong> — confirmá para registrar`,
+    c:`<div style="background:#fff1f2;border:2px solid #fecaca;border-radius:14px;padding:14px;margin-top:10px;">
+      <div style="font-size:.63rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#991b1b;margin-bottom:10px;">💸 Registro de gasto</div>
+      <div style="font-size:.85rem;margin-bottom:4px;">Descripción: <b>${raw}</b></div>
+      ${pr?`<div style="font-size:.85rem;margin-bottom:4px;">Monto: <b>Gs. ${pr.toLocaleString('es')}</b></div>`:''}
+      <div style="font-size:.85rem;margin-bottom:4px;">Fecha: <b>${f}</b></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button onclick="confirmar('gasto',0,'gasto')" style="${btnStyle('#fff','#16a34a')}">✓ Confirmar</button>
+        <button style="${btnStyle('#374151','#e5e7eb')}">✏️ Editar</button>
+      </div></div>`};
+  }
+  if(accion==='repro')return{m:`📋 <strong>Vacas para tacto — ${f}</strong><br><br>🔴 <b>Lote 1</b> — 12 vacas (urgente)<br>🟡 <b>Lote 3</b> — 5 vacas<br><br>Total: <b>17 vacas</b> para diagnóstico<br><br>¿Querés que te recuerde mañana a las 7:00 AM?`,c:null};
+  if(accion==='stock')return{m:`❄️ <strong>Stock de semen — ${f}</strong><br><br>• Brahman X (BX001): <b>24 pajuelas</b><br>• Nelore Elite (NE002): <b>18 pajuelas</b><br>• Aberdeen Angus (AA003): <b>6 pajuelas ⚠️</b><br><br>⚠️ Stock bajo en Angus. ¿Generamos orden de compra?`,c:null};
+  if(accion==='reporte')return{m:`📊 <strong>Resumen — Mayo 2026</strong><br><br><b>Animales en stock:</b> 847<br><b>Ventas del mes:</b> Gs. 48.000.000<br><b>Compras del mes:</b> Gs. 22.000.000<br><b>Gastos operativos:</b> Gs. 8.880.000<br><b>Inseminaciones:</b> 34 vacas<br><b>Tasa de preñez:</b> 82%<br><br>¿Querés el reporte en PDF?`,c:null};
+  return{m:`🤔 Entendí tu mensaje. ¿Es una <b>compra</b>, <b>venta</b>, <b>inseminación</b> o <b>gasto</b>?<br><br>Ejemplos:<br>• <em>"Realice compra de 100 vacas"</em><br>• <em>"Vendimos 20 novillos"</em><br>• <em>"Inseminamos 15 vacas del lote 3"</em>`,c:null};
+}
+
+function gT(){const d=new Date();return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');}
+function addMsg(html,tipo,card){
+  const d=document.createElement('div');d.className='msg '+tipo;const t=gT();
+  if(tipo==='user'){d.innerHTML=`<div class="msg-row"><div><div class="bubble">${html}</div><div class="msg-t">${t}</div></div></div>`;}
+  else{d.innerHTML=`<div class="msg-row"><div class="bot-av">IA</div><div><div class="bubble">${html}${card||''}</div><div class="msg-t">${t}</div></div></div>`;}
+  const c=document.getElementById('chatMsgs');c.appendChild(d);c.scrollTop=c.scrollHeight;
+}
+function showTyping(){
+  const d=document.createElement('div');d.className='msg bot';d.id='typing';
+  d.innerHTML=`<div class="msg-row"><div class="bot-av">IA</div><div class="typing"><span></span><span></span><span></span></div></div>`;
+  const c=document.getElementById('chatMsgs');c.appendChild(d);c.scrollTop=c.scrollHeight;
+}
+function enviar(){
+  const inp=document.getElementById('chatIn');const txt=inp.value.trim();if(!txt)return;
+  addMsg(txt,'user',null);inp.value='';showTyping();
+  setTimeout(()=>{const ty=document.getElementById('typing');if(ty)ty.remove();const r=buildResp(parse(txt));addMsg(r.m,'bot',r.c||null);},1300);
+}
+function sc(t){document.getElementById('chatIn').value=t;enviar();}
+function simVoz(){
+  const b=document.querySelector('.chat-btn');b.textContent='🔴';
+  setTimeout(()=>{b.textContent='🎙️';document.getElementById('chatIn').value='Realice compra de 100 vacas';enviar();},2000);
+}
+// Mapa tipo → tabla Access
+const TABLAS={compra:'ComprasAnimales',venta:'VentasAnimales',insem:'Inseminaciones',insumo:'ComprasInsumos',gasto:'ComprasInsumos'};
+
+async function confirmar(tipo,cant,animal,extras){
+  const ic={compra:'🛒',venta:'💰',insem:'💉',insumo:'🛍️',gasto:'💸'};
+  const lb={compra:'Compra de animales',venta:'Venta de animales',insem:'Inseminación registrada',insumo:'Compra de insumos',gasto:'Gasto registrado'};
+  const f=new Date().toLocaleDateString('es-PY');
+  extras=extras||{};
+
+  // Construir objeto para Access
+  const datos={
+    accion: tipo,
+    tabla:  TABLAS[tipo]||'ComprasAnimales',
+    fecha:  new Date().toLocaleDateString('en-US'),
+    tipoAnimal: animal,
+    cantidad: cant,
+    pesoPromedio: extras.peso||0,
+    precioPorKg:  extras.precio||0,
+    totalGs:      extras.total||0,
+    proveedor:    extras.proveedor||'',
+    cliente:      extras.cliente||'',
+    lote:         extras.lote||'',
+    protocolo:    extras.protocolo||'',
+    semen:        extras.semen||'',
+    tecnico:      extras.tecnico||'Juan Ramírez',
+    descripcion:  extras.descripcion||animal,
+    categoria:    extras.categoria||tipo,
+    unidad:       extras.unidad||'unidad',
+    mensajeOriginal: extras.msgOriginal||''
+  };
+
+  // Enviar: online=Access directo | offline=IndexedDB
+  const resultado = await enviarRegistro(datos);
+  const modo = resultado.modo;
+
+  let msgExtra='';
+  if(modo==='online'){
+    msgExtra=`• Guardado en Access ✓ (ID: ${resultado.id})<br>• Sincronizado ✓`;
+  } else {
+    msgExtra=`• Guardado offline 💾<br>• Se sincronizará con Access al reconectar`;
+  }
+
+  addMsg(`${modo==='online'?'✅':'💾'} <strong>${lb[tipo]}</strong><br><br>${ic[tipo]} ${cant>0?cant+' '+animal+'s · ':''}${f}<br>${msgExtra}`,'bot',null);
+
+  // Actualizar actividad
+  const al=document.getElementById('actList');
+  if(al){
+    const cls=tipo==='insem'?'ac-p':(tipo==='venta'?'ac-a':'ac-v');
+    const item=document.createElement('div');item.className='act-item';
+    const syncIcon=modo==='online'?'✅':'💾';
+    item.innerHTML=`<div class="act-ic ${cls}">${ic[tipo]}</div><div class="act-txt"><div class="at">${lb[tipo]}</div><div class="as">${cant>0?cant+' '+animal+'s · ':''}IA · ${f} · ${syncIcon}</div></div><div class="act-r"><div class="act-time">Ahora</div></div>`;
+    al.prepend(item);
+  }
+  actualizarIndicador();
+}
+function saveInsem(){alert('✅ Inseminación guardada\n\n• 8 vacas · Lote 4 · Brahman X\n• Sincronizado ✓\n• Diagnóstico: 09/06/2026');go('repro');}
+function saveVenta(){alert('✅ Venta registrada\n\n• 15 novillos · Juan López\n• Gs. 11.340.000 · Sincronizado ✓');go('agro');}
+function saveCompra(){alert('✅ Compra registrada\n\n• 100 vacas · Estancia Norte\n• Gs. 57.000.000 · Lote 5 ✓');go('agro');}
+</script>
+</body>
+</html>
