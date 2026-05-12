@@ -400,15 +400,15 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div class="sb-sec">Principal</div>
   <button class="sb-item act" onclick="go('home')"><span class="sb-i">🏠</span> Dashboard</button>
   <button class="sb-item" onclick="go('chat')"><span class="sb-i">🤖</span> IA Asistente</button>
-  <div class="sb-sec">AgroSoft</div>
-  <button class="sb-item" onclick="go('agro')"><span class="sb-i">🐄</span> Panel AgroSoft</button>
+  <div class="sb-sec">Engorde & Comercial</div>
+  <button class="sb-item" onclick="go('agro')"><span class="sb-i">⚖️</span> Panel Engorde</button>
   <button class="sb-item" onclick="go('form-compra')"><span class="sb-i">🛒</span> Compras</button>
   <button class="sb-item" onclick="go('form-venta')"><span class="sb-i">💰</span> Ventas</button>
   <button class="sb-item" onclick="go('kilos')"><span class="sb-i">⚖️</span> Kilos y Ganancias</button>
   <button class="sb-item" onclick="go('alimentacion')"><span class="sb-i">🌽</span> Costos Alimentación</button>
   <button class="sb-item" onclick="go('resultados')"><span class="sb-i">📊</span> Resultados por Lote</button>
-  <div class="sb-sec">ReproGan</div>
-  <button class="sb-item" onclick="go('repro')"><span class="sb-i">🔬</span> Panel ReproGan</button>
+  <div class="sb-sec">Cría & Reproducción</div>
+  <button class="sb-item" onclick="go('repro')"><span class="sb-i">🐄</span> Panel Cría</button>
   <button class="sb-item" onclick="go('madres')"><span class="sb-i">🐄</span> Madres y Terneros</button>
   <button class="sb-item" onclick="go('form-insem')"><span class="sb-i">💉</span> Inseminación <span class="sb-badge">8</span></button>
   <button class="sb-item" onclick="go('caravana')"><span class="sb-i">🏷️</span> Por Caravana</button>
@@ -495,19 +495,19 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
         <div class="mod-iw">🐄</div>
         <div class="mod-b">
           <div class="mod-tag2">IsabSoft</div>
-          <div class="mod-name">AgroSoft</div>
-          <div class="mod-det">847 animales · 12 movimientos hoy · Gs. 48M en ventas</div>
+          <div class="mod-name">Engorde & Comercial</div>
+          <div class="mod-det">73 en engorde · GDP 0.85 kg/día · Gs. 8.8M resultado</div>
         </div>
-        <div class="mod-chip">ERP</div>
+        <div class="mod-chip">ENGORDE</div>
       </button>
       <button class="mod-card repro" onclick="go('repro')">
-        <div class="mod-iw">🔬</div>
+        <div class="mod-iw">🐄</div>
         <div class="mod-b">
           <div class="mod-tag2">IsabSoft</div>
-          <div class="mod-name">ReproGan</div>
-          <div class="mod-det">34 inseminadas · 82% preñez · 8 alertas reproductivas</div>
+          <div class="mod-name">Cría & Reproducción</div>
+          <div class="mod-det">42 madres · 38 terneros · 82% preñez · 8 alertas</div>
         </div>
-        <div class="mod-chip">REPRO</div>
+        <div class="mod-chip">CRÍA</div>
       </button>
     </div>
 
@@ -619,8 +619,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div id="bottomnav">
     <button class="bn act" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -662,13 +662,13 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
 <div class="screen" id="s-repro">
   <div class="topbar">
     <button class="back-btn" onclick="go('home')">←</button>
-    <span class="ttitle">🔬 ReproGan</span>
+    <span class="ttitle">🐄 Cría & Reproducción</span>
     <span class="badge-on">● Online</span>
   </div>
   <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
     <div class="mod-header rh">
-      <h1>IsabSoft | ReproGan</h1>
-      <p>Gestión reproductiva bovina inteligente</p>
+      <h1>Cría & Reproducción</h1>
+      <p>Madres, terneros, inseminación y sanidad</p>
       <div class="stat-strip">
         <div class="stat-p"><div class="sv">34</div><div class="sl">Inseminadas</div></div>
         <div class="stat-p"><div class="sv">28</div><div class="sl">Confirmadas</div></div>
@@ -748,8 +748,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -815,8 +815,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -865,8 +865,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -931,8 +931,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -990,8 +990,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -1049,8 +1049,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn" onclick="go('agro')"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn act"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -1241,13 +1241,13 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
 <div class="screen" id="s-agro">
   <div class="topbar">
     <button class="back-btn" onclick="go('home')">←</button>
-    <span class="ttitle">🐄 AgroSoft</span>
+    <span class="ttitle">⚖️ Engorde & Comercial</span>
     <span class="badge-on">● Online</span>
   </div>
   <div style="overflow-y:auto;flex:1;padding-bottom:70px;">
     <div class="mod-header ah">
-      <h1>IsabSoft | AgroSoft</h1>
-      <p>Compra, venta y gestión de animales</p>
+      <h1>Engorde & Comercial</h1>
+      <p>Kilos, alimentación, compras, ventas y resultados</p>
       <div class="stat-strip">
         <div class="stat-p"><div class="sv">847</div><div class="sl">Animales</div></div>
         <div class="stat-p"><div class="sv">15</div><div class="sl">Vendidos hoy</div></div>
@@ -1311,8 +1311,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -1375,8 +1375,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -1439,8 +1439,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
@@ -1502,8 +1502,8 @@ table.pt tbody td{padding:11px 10px;border-bottom:1px solid var(--fondo);}
   <div style="display:flex;background:#fff;border-top:1px solid #eaeaf0;position:sticky;bottom:0;z-index:20;">
     <button class="bn" onclick="go('home')"><span class="bn-i">🏠</span><span class="bn-l">Inicio</span></button>
     <button class="bn" onclick="go('chat')"><span class="bn-i">🤖</span><span class="bn-l">IA Chat</span></button>
-    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">AgroSoft</span></button>
-    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">ReproGan</span></button>
+    <button class="bn act"><span class="bn-i">🐄</span><span class="bn-l">Engorde</span></button>
+    <button class="bn" onclick="go('repro')"><span class="bn-i">🔬</span><span class="bn-l">Cría</span></button>
   </div>
 </div>
 
